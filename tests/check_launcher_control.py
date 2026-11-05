@@ -15,6 +15,7 @@ control=importlib.util.module_from_spec(spec);spec.loader.exec_module(control)
 class Android:
     def __init__(self):
         self.home='stock.home/.Home';self.disabled=set();self.enabled=0;self.foreground=self.home
+        self.uid=10001;self.shared=False
         self.remote=None;self.commands=[];self.deny=False;self.identity='hardware-001';self.start_fail=False;self.priority_lock=False
     def run(self,args,**kwargs):
         if args[:3]!=['adb','-s','qa-tv']:raise AssertionError('Wrong device')
@@ -29,7 +30,7 @@ class Android:
         elif cmd[:3]==['pm','list','packages']:
             out='\n'.join('package:'+p for p in (self.disabled if '-d' in cmd else ['stock.home','android','com.android.systemui']))
         elif cmd[:2]==['pm','path']:out='package:/data/app/dev.pdmv.os/base.apk'
-        elif cmd[:2]==['dumpsys','package']:out='userId=10001\nUser 0: installed=true enabled='+str(self.enabled)
+        elif cmd[:2]==['dumpsys','package']:out='userId='+str(self.uid)+'\n'+('sharedUser=shared\n' if self.shared else '')+'User 0: installed=true enabled='+str(self.enabled)
         elif cmd[:2]==['pm','disable-user']:
             if self.deny:rc=1;out='SecurityException: denied'
             else:self.disabled.add(cmd[-1]);self.enabled=3
@@ -77,6 +78,15 @@ class ControlTests(unittest.TestCase):
         with self.assertRaises(RuntimeError):self.device.apply(disable_stock=True)
         self.assertEqual(self.android.home,'stock.home/.Home');self.assertNotIn('stock.home',self.android.disabled)
         self.assertEqual(self.device.load()['phase'],'restored')
+    def test_system_uid_home_is_not_disabled(self):
+        self.android.uid=1000
+        with self.assertRaises(RuntimeError):self.device.apply(disable_stock=True)
+        self.assertFalse(any(c[:2]==['pm','disable-user'] for c in self.android.commands))
+        self.assertEqual(self.android.home,'stock.home/.Home')
+    def test_shared_uid_home_is_not_disabled(self):
+        self.android.shared=True
+        with self.assertRaises(RuntimeError):self.device.apply(disable_stock=True)
+        self.assertFalse(any(c[:2]==['pm','disable-user'] for c in self.android.commands))
     def test_device_backup_survives_host_loss(self):
         self.device.apply();self.device.path.unlink();self.device.restore()
         self.assertEqual(self.android.home,'stock.home/.Home')

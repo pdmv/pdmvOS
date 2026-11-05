@@ -1,5 +1,11 @@
 # Changelog
 
+## 3.1.4
+
+- Chuẩn bị Android SDK rõ ràng trong CI và workflow kiểm chứng release.
+- Hoàn thiện hướng dẫn khôi phục khi cài đặt gặp lỗi và bổ sung wrapper khôi phục trong ZIP.
+- Kiểm thử trình cài bằng các tệp tải từ release GitHub thật.
+
 ## 3.1.3
 
 Bản phân phối công khai đầu tiên.

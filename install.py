@@ -56,7 +56,7 @@ def run_tool(installed, store, args):
     if args.disable_stock and not args.restore:
         command.append('--disable-stock')
     result = subprocess.call(command, env=environment)
-    if result == 0 and not args.restore:
+    if not args.restore:
         interpreter = 'py' if os.name == 'nt' else 'python3'
         print('Khôi phục Home gốc bằng lệnh sau, với cùng thư mục lưu trạng thái.')
         restore = [interpreter, str(Path(__file__).resolve()), args.device, '--restore']

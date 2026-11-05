@@ -7,7 +7,7 @@ kit=$(mktemp -d)
 trap 'rm -rf "$kit"' EXIT
 root="$kit/pdmvOS-$version"
 mkdir -p "$root/tools" "$root/dist"
-cp tools/{pdmvos.py,release_assets.py,launcher-control.py,set-wallpaper.py} "$root/tools/"
+cp tools/{pdmvos.py,release_assets.py,launcher-control.py,set-wallpaper.py,restore-launcher.sh} "$root/tools/"
 cp pdmvos install.py README.md LICENSE NOTICE.md ASSETS_LICENSE.md CHANGELOG.md release-signing.json version.properties "$root/"
 cp -R docs "$root/docs"
 cp "dist/pdmvOS-$version.apk" "dist/pdmvOS-$version.apk.sha256" "dist/pdmvOS-$version.release.json" "$root/dist/"

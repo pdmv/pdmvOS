@@ -7,7 +7,7 @@
 | Sony BRAVIA 4K GB ATV3 | 9 | Dock/app list, menu, giữ phím, mở/về ứng dụng, hủy mở, thiếu RAM |
 | Xiaomi Mi Box 4 | 9 | Dock/app list, menu, giữ phím, mở/về ứng dụng, hủy mở, thiếu RAM |
 
-Các phép đo UI được thực hiện ngày 05/11/2026 trên bộ mã giao diện 3.1.2. Bản 3.1.3 hoàn thiện việc phân phối công khai, tài liệu và công cụ cài đặt.
+Các phép đo UI được thực hiện ngày 05/11/2026 trên bộ mã giao diện 3.1.2. Các bản 3.1.3–3.1.4 hoàn thiện việc phân phối công khai, tài liệu và công cụ cài đặt.
 
 ## Chuỗi thao tác
 
@@ -31,3 +31,7 @@ Nhịp cập nhật đo khoảng cách giữa các callback VSYNC khi có hoạt
 - Chưa có thử nhiều ngày liên tục hoặc xác nhận trên mọi firmware và phiên bản Android. Ngủ/đánh thức, HDMI và reboot cần được kiểm tra trên từng model.
 
 Kết quả chức năng đạt cùng các số liệu trên là phạm vi đã kiểm tra. Báo lỗi hoặc bổ sung kết quả thiết bị mới bằng issue, kèm model và phiên bản Android.
+
+## Công cụ phân phối
+
+Bản 3.1.3 đã qua kiểm tra cài/khôi phục với bộ ZIP tải từ GitHub thật và ADB mô phỏng, gồm kiểm tra SHA-256, APK, sao lưu Home và phục hồi bằng bộ cài đã lưu. Bản 3.1.4 được chốt cùng CI đã chuẩn bị SDK và hướng dẫn khôi phục đầy đủ.

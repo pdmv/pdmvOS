@@ -1,6 +1,6 @@
-## pdmvOS 3.1.3
+## pdmvOS 3.1.4
 
-Bản phân phối công khai đầu tiên của pdmvOS, gồm APK release đã ký và bộ cài cho máy tính.
+Bản hoàn thiện bộ cài và quy trình phát hành công khai của pdmvOS, gồm APK release đã ký và bộ cài cho máy tính.
 
 - Dock sáu ô, app list, kính theo hình nền và hoạt ảnh lò xo có quán tính.
 - Menu giữ OK, ghim/bỏ ghim, sắp xếp và truy cập thao tác hệ thống.
