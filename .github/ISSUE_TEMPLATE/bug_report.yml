@@ -1,0 +1,36 @@
+name: Báo lỗi
+description: Gửi lỗi có thể tái hiện trên thiết bị hoặc công cụ cài đặt.
+labels: [bug]
+body:
+  - type: input
+    id: version
+    attributes:
+      label: Phiên bản pdmvOS
+      placeholder: 3.1.3
+    validations:
+      required: true
+  - type: input
+    id: device
+    attributes:
+      label: Model và phiên bản Android
+      placeholder: Sony BRAVIA / Android 9
+    validations:
+      required: true
+  - type: textarea
+    id: reproduce
+    attributes:
+      label: Các bước tái hiện
+      description: Mô tả thao tác và kết quả thực tế.
+    validations:
+      required: true
+  - type: textarea
+    id: expected
+    attributes:
+      label: Kết quả mong muốn
+    validations:
+      required: true
+  - type: textarea
+    id: evidence
+    attributes:
+      label: Ảnh, video hoặc log
+      description: Loại thông tin riêng như serial, IP và mã ghép nối trước khi gửi.

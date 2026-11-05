@@ -1,0 +1,40 @@
+plugins { id 'com.android.application' }
+def releaseKey = rootProject.file('.local/signing/pdmvos-release.p12')
+def releasePassword = rootProject.file('.local/signing/password')
+def releaseVersion = new Properties()
+rootProject.file('version.properties').withInputStream { releaseVersion.load(it) }
+android {
+    namespace 'dev.pdmv.os'
+    compileSdk 35
+    defaultConfig {
+        applicationId 'dev.pdmv.os'
+        minSdk 26
+        targetSdk 35
+        versionCode releaseVersion.versionCode.toInteger()
+        versionName releaseVersion.versionName
+    }
+    signingConfigs {
+        release {
+            if (releaseKey.exists() && releasePassword.exists()) {
+                storeFile releaseKey
+                storePassword releasePassword.text.trim()
+                keyAlias 'pdmvos'
+                keyPassword releasePassword.text.trim()
+            }
+        }
+    }
+    buildTypes {
+        release { minifyEnabled false; signingConfig signingConfigs.release }
+    }
+    compileOptions { sourceCompatibility JavaVersion.VERSION_17; targetCompatibility JavaVersion.VERSION_17 }
+}
+
+tasks.configureEach {
+    if (name == 'validateSigningRelease') {
+        doFirst {
+            if (!releaseKey.exists() || !releasePassword.exists()) {
+                throw new GradleException('Initialize or restore .local/signing before a release build')
+            }
+        }
+    }
+}

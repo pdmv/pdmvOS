@@ -1,0 +1,16 @@
+name: Đề xuất cải tiến
+description: Mô tả nhu cầu và tình huống sử dụng.
+body:
+  - type: textarea
+    id: need
+    attributes:
+      label: Bạn muốn giải quyết vấn đề gì?
+    validations:
+      required: true
+  - type: textarea
+    id: proposal
+    attributes:
+      label: Thay đổi đề xuất
+      description: Có thể kèm ví dụ hoặc ảnh minh họa.
+    validations:
+      required: true

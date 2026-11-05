@@ -1,0 +1,39 @@
+name: Verify release
+on:
+  release:
+    types: [published]
+  workflow_dispatch:
+    inputs:
+      tag:
+        description: Release tag
+        required: true
+permissions:
+  contents: read
+jobs:
+  verify:
+    runs-on: ubuntu-24.04
+    timeout-minutes: 15
+    env:
+      RELEASE_TAG: ${{ github.event.release.tag_name || inputs.tag }}
+      GH_TOKEN: ${{ github.token }}
+    steps:
+      - uses: actions/checkout@3d3c42e5aac5ba805825da76410c181273ba90b1 # v7.0.1
+        with:
+          ref: ${{ env.RELEASE_TAG }}
+      - uses: actions/setup-java@77dd5b2ce225ea11469928ac317850245a74ae78 # v6.2.0
+        with:
+          distribution: temurin
+          java-version: '17'
+      - uses: actions/setup-python@6d4fd22b20465ccc0f7354476588e8df7c9ca0e0 # v7.1.0
+        with:
+          python-version: '3.12'
+      - name: Install SDK packages
+        run: sdkmanager 'platforms;android-35' 'build-tools;34.0.0'
+      - name: Download release assets
+        run: gh release download "$RELEASE_TAG" --repo "$GITHUB_REPOSITORY" --dir dist --pattern '*.apk' --pattern '*.sha256' --pattern '*.release.json' --pattern '*operating-kit.zip'
+      - name: Verify checksums and pinned APK identity
+        run: |
+          (cd dist && sha256sum -c *.sha256)
+          version=$(sed -n 's/^versionName=//p' version.properties)
+          test "$RELEASE_TAG" = "v$version"
+          python3 tools/check-release.py "dist/pdmvOS-$version.apk" --verify
