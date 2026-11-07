@@ -1,5 +1,12 @@
 # Changelog
 
+## 3.1.5
+
+- Cập nhật từ GitHub Releases ngay trong launcher. Kiểm tra dung lượng, phiên bản, SHA-256 và chữ ký, giữ tệp hợp lệ để dùng lại, rồi mở trình cài Android để xác nhận.
+- Tách focus giữa nút Đầu vào và các dòng trong dropdown. Thêm xác nhận khi chuyển đầu vào hoặc tắt Wi-Fi.
+- Đồng bộ dropdown và hộp thoại về nền kính, bo góc, khoảng cách và chuyển động focus.
+- Thanh tải tăng liên tục và chiếm trọn bề ngang nội dung. Thu vùng vẽ lại khi mở hộp thoại.
+
 ## 3.1.4
 
 - Chuẩn bị Android SDK rõ ràng trong CI và workflow kiểm chứng release.

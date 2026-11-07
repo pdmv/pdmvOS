@@ -3,13 +3,24 @@
 [![Kiểm tra](https://github.com/pdmv/pdmvOS/actions/workflows/ci.yml/badge.svg)](https://github.com/pdmv/pdmvOS/actions/workflows/ci.yml)
 [![Release](https://img.shields.io/github/v/release/pdmv/pdmvOS)](https://github.com/pdmv/pdmvOS/releases/latest)
 
-Launcher dành cho Android TV và Google TV, với giao diện kính, Dock tùy chỉnh và hoạt ảnh có quán tính. Điều khiển bằng remote; giữ OK để ghim, sắp xếp hoặc quản lý ứng dụng.
+Launcher dùng remote cho Android TV và Google TV, với Dock sáu ô tùy chỉnh, nền kính lấy màu từ hình nền và hoạt ảnh theo focus.
 
 ![Màn hình chính pdmvOS](docs/images/home.png)
 
 | Danh sách ứng dụng | Menu nhấn giữ |
 | --- | --- |
 | ![Danh sách ứng dụng](docs/images/apps.png) | ![Menu ứng dụng](docs/images/menu.png) |
+
+| Chọn đầu vào | Xác nhận tắt Wi-Fi |
+| --- | --- |
+| ![Danh sách đầu vào khi focus một dòng](docs/images/input.jpg) | ![Hộp thoại xác nhận tắt Wi-Fi](docs/images/confirm-wifi.jpg) |
+
+## Điều khiển
+
+- **Ứng dụng:** Nhấn giữ **OK** trên ứng dụng để ghim, bỏ ghim hoặc sắp xếp.
+- **Đầu vào:** Nhấn **OK** để mở hoặc đóng danh sách, nhấn **Xuống** để vào danh sách. Chọn một đầu vào để mở hộp thoại xác nhận.
+- **Wi-Fi:** Khi Wi-Fi đang bật, nhấn nút Wi-Fi để mở hộp thoại xác nhận. Nhấn giữ để mở cài đặt Wi-Fi của TV.
+- **Cập nhật:** Nhấn giữ **Cài đặt** để kiểm tra và tải bản mới. Launcher xác minh APK trước khi chuyển sang màn hình xác nhận cài đặt của Android. Lần đầu, TV có thể yêu cầu cho phép pdmvOS cài ứng dụng từ nguồn này.
 
 ## Cài đặt
 

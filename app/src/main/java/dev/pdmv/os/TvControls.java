@@ -26,8 +26,8 @@ final class TvControls {
             if(wm.isWifiEnabled()){if(cm==null)return;wifi=ni!=null&&ni.isConnected()?2:1;}else wifi=0;
         }catch(RuntimeException ignored){/* Keep the last known state; a read failure is not a disconnection. */}
     }
-    boolean toggleWifi(){
-        try{WifiManager wm=(WifiManager)context.getApplicationContext().getSystemService(Context.WIFI_SERVICE);return wm!=null&&wm.setWifiEnabled(!wm.isWifiEnabled());}
+    boolean setWifiEnabled(boolean enabled){
+        try{WifiManager wm=(WifiManager)context.getApplicationContext().getSystemService(Context.WIFI_SERVICE);return wm!=null&&(wm.isWifiEnabled()==enabled||wm.setWifiEnabled(enabled));}
         catch(RuntimeException error){return false;}
     }
     List<TvInputInfo> discoverInputs(){

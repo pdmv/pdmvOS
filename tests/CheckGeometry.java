@@ -60,6 +60,8 @@ public final class CheckGeometry {
         }
         check(UiGeometry.POPUP_RADIUS==UiGeometry.POPUP_ROW_RADIUS+UiGeometry.POPUP_PADDING,
             "popup radius invariant");
+        check(UiGeometry.popupItemScale(1,0)==1f && UiGeometry.popupItemScale(0,0)<UiGeometry.popupItemScale(1,1),
+            "focused popup item must fit the inset and keep its press travel");
         check(UiGeometry.PREVIEW_OUTER_RADIUS==UiGeometry.PREVIEW_INNER_RADIUS+UiGeometry.PREVIEW_PADDING,
             "preview radius invariant");
         for(int rows=1;rows<=12;rows++){

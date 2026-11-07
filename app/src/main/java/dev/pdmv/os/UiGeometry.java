@@ -4,9 +4,17 @@ package dev.pdmv.os;
 public final class UiGeometry {
     private UiGeometry() { }
     public static final float WIDTH = 1920f, HEIGHT = 1080f;
-    public static final float POPUP_PADDING=20f, POPUP_ROW_RADIUS=24f;
+    public static final float POPUP_PADDING=20f, POPUP_ROW_HEIGHT=60f;
+    public static final float POPUP_GAP=POPUP_PADDING;
+    public static final float POPUP_ROW_RADIUS=POPUP_ROW_HEIGHT/2f, POPUP_TEXT_PADDING=20f;
+    public static final float POPUP_TITLE_INSET=POPUP_PADDING+10f;
     public static final float POPUP_RADIUS=POPUP_ROW_RADIUS+POPUP_PADDING;
-    public static final float POPUP_HEADER=72f, POPUP_ROW_HEIGHT=68f, POPUP_PITCH=80f;
+    public static final float POPUP_HEADER=84f, POPUP_PITCH=POPUP_ROW_HEIGHT+POPUP_GAP;
+    public static float popupItemScale(float focus,float press){
+        float selected=clamp(focus,0f,1f);
+        // The focused footprint is the layout size, so it keeps the panel inset.
+        return 1f-(.12f*(1f-selected)+.07f*clamp(press,0f,1f)*selected)/1.06f;
+    }
     public static final float PREVIEW_PADDING=10f, PREVIEW_INNER_RADIUS=32f;
     public static final float PREVIEW_OUTER_RADIUS=PREVIEW_INNER_RADIUS+PREVIEW_PADDING;
     public static float popupHeight(int count){

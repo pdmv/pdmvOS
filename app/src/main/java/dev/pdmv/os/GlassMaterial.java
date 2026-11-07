@@ -123,14 +123,20 @@ final class GlassMaterial {
             anchoredSample.setConcat(inverseTransform,samplingFrame);
             matrix.setConcat(anchoredSample,matrix);
         }
-        if(r<Math.min(w,h)*.5f-.25f){
+        boolean popup=image==menuBackdrop;
+        if(!popup&&r<Math.min(w,h)*.5f-.25f){
             // Counter the cached squircle's local canvas transform in the sampler only.
             matrix.postTranslate(-x,-y);matrix.postScale(Math.max(1,Math.round(w))/w,Math.max(1,Math.round(h))/h);
         }
         shaders[slot].setLocalMatrix(matrix);
         p.reset();p.setAntiAlias(true);p.setFilterBitmap(true);p.setShader(shaders[slot]);p.setAlpha(Math.round(255*opacity));
-        shape.draw(c,x,y,w,h,r,p);
+        drawMaterialShape(c,x,y,w,h,r,popup);
         p.setShader(null);
+    }
+    private void drawMaterialShape(Canvas c,float x,float y,float w,float h,float r,boolean popup){
+        // Circular arcs make the popup contour a true offset of its capsule items.
+        if(popup)c.drawRoundRect(x,y,x+w,y+h,r,r,p);
+        else shape.draw(c,x,y,w,h,r,p);
     }
     private boolean liveRims;
     void setLiveRims(boolean active){liveRims=active;}
@@ -184,8 +190,8 @@ final class GlassMaterial {
         return bitmap;
     }
     private void drawDecoration(Canvas c,float x,float y,float w,float h,float r,int k,boolean rim){
-        p.setColor(SMOKE[k]);shape.draw(c,x,y,w,h,r,p);
-        p.setColor(GLAZE[k]);shape.draw(c,x,y,w,h,r,p);p.setAlpha(255);
+        p.setColor(SMOKE[k]);drawMaterialShape(c,x,y,w,h,r,k==3);
+        p.setColor(GLAZE[k]);drawMaterialShape(c,x,y,w,h,r,k==3);p.setAlpha(255);
         if(k==1||k==3){if(rim)drawRim(c,x,y,w,h,r,k);return;}
         // A single feathered inner reflection and a fine lip; no dark tint or double contour.
         float depth=DEPTH[k];int clipped=c.save();c.clipPath(outline.get(w,h,r));
@@ -209,7 +215,7 @@ final class GlassMaterial {
         int bottom=k==1?0x20ffffff:k==0||k==3?0x60ffffff:0x78ffffff;
         p.setShader(edge(0,0,h,top,bottom));
         float inset=k==1?.5f:.7f;
-        shape.draw(c,inset,inset,w-2*inset,h-2*inset,Math.max(0,r-inset),p);
+        drawMaterialShape(c,inset,inset,w-2*inset,h-2*inset,Math.max(0,r-inset),k==3);
         p.setShader(null);p.setStyle(Paint.Style.FILL);c.restoreToCount(saved);
     }
     private Shader edge(float x,float y,float h,int top,int bottom){

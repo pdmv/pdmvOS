@@ -1,23 +1,15 @@
-## pdmvOS 3.1.4
+## pdmvOS 3.1.5
 
-Bản hoàn thiện bộ cài và quy trình phát hành công khai của pdmvOS, gồm APK release đã ký và bộ cài cho máy tính.
+- **Cập nhật trong launcher.** Nhấn giữ **Cài đặt** để kiểm tra bản mới trên GitHub Releases. Tệp tải về được kiểm tra phiên bản, SHA-256 và chữ ký trước khi mở trình cài Android. Có thể dùng lại tệp hợp lệ sau khi mở lại launcher hoặc hủy cài đặt.
+- **Đầu vào và Wi-Fi.** Focus chỉ vào dropdown sau khi nhấn **Xuống**. Chuyển đầu vào và tắt Wi-Fi đều có bước xác nhận, mặc định chọn **Hủy**.
+- **Giao diện.** Dropdown và hộp thoại dùng chung nền kính, bo góc và chuyển động nút. Thanh tải hiển thị tiến trình bằng một dải màu tăng dần.
 
-- Dock sáu ô, app list, kính theo hình nền và hoạt ảnh lò xo có quán tính.
-- Menu giữ OK, ghim/bỏ ghim, sắp xếp và truy cập thao tác hệ thống.
-- Bộ cài Python tự tải release, kiểm tra SHA-256, lưu Home gốc và hỗ trợ khôi phục.
-- Tùy chọn `--disable-stock` dành cho firmware cần tắt Home gốc để dùng launcher mới.
-- Tài liệu, ảnh giao diện, MIT cho mã nguồn và ghi nguồn tài nguyên được đóng gói đầy đủ.
+### Cài đặt
 
-### Tải và cài
+Tải APK đã ký hoặc bộ cài ZIP từ các tệp đính kèm. Nếu đang dùng bản chính thức cũ, có thể nâng cấp tại chỗ bằng trình cài trên máy tính hoặc cài APK cùng chữ ký. Bản 3.1.5 bổ sung mục cập nhật trong launcher cho các lần sau.
 
-Tải APK để cài thủ công, hoặc dùng `install.py` trong repo. Máy tính cần Python 3.9+ và adb, TV cần bật gỡ lỗi và cho phép kết nối.
+Xem [hướng dẫn cài đặt và khôi phục](https://github.com/pdmv/pdmvOS/blob/v3.1.5/docs/installation.md) để thiết lập ADB và chọn pdmvOS làm Home.
 
-```sh
-python3 install.py DIA_CHI_TV
-```
+### Kiểm thử
 
-Bộ ZIP chứa công cụ `pdmvos`, APK và tài liệu. Tệp `.sha256` dùng tên tệp tương đối để kiểm tra ngay trong thư mục tải về.
-
-### Phạm vi kiểm thử
-
-Giao diện 3.1.2 kế thừa trong bản này đã qua thử liên hoàn trên Sony BRAVIA và Mi Box chạy Android 9, mỗi máy 30 vòng và 1.020 sự kiện phím. Các phép đo vẫn ghi nhận đỉnh trễ khi nhiều hiệu ứng chồng nhau hoặc khi chuyển ứng dụng. Xem `docs/testing.md` trong repo để biết phạm vi và giới hạn.
+Luồng cập nhật, chuyển focus, xác nhận đầu vào và hủy tắt Wi-Fi được thử trên Sony BRAVIA chạy Android 9. Khả năng điều khiển đầu vào và Wi-Fi phụ thuộc firmware của TV.
