@@ -145,6 +145,7 @@ public final class MainActivity extends Activity {
             loadSolarAsync();
             Log.i(TAG,"startup.complete");
             handleWallpaperIntent(getIntent());
+            if(Intent.ACTION_ALL_APPS.equals(getIntent().getAction()))view.requestApps();
         }catch(RuntimeException | LinkageError | AssertionError startupError){
             Log.e(TAG,"startup.failed",startupError);
             showStartupFallback(startupError);
@@ -194,7 +195,15 @@ public final class MainActivity extends Activity {
     @Override protected void onNewIntent(Intent intent){
         super.onNewIntent(intent);setIntent(intent);
         if(wallpapers!=null)handleWallpaperIntent(intent);
-        if(view!=null&&Intent.ACTION_MAIN.equals(intent.getAction())&&intent.hasCategory(Intent.CATEGORY_HOME))view.showHomeFromSystem();
+        if(view!=null&&Intent.ACTION_ALL_APPS.equals(intent.getAction()))view.requestApps();
+        else if(view!=null&&Intent.ACTION_MAIN.equals(intent.getAction())&&intent.hasCategory(Intent.CATEGORY_HOME))view.showHomeFromSystem();
+    }
+    @Override public boolean dispatchKeyEvent(KeyEvent event){
+        if(view!=null&&event.getKeyCode()==KeyEvent.KEYCODE_ALL_APPS){
+            if(event.getAction()==KeyEvent.ACTION_UP&&!event.isCanceled())view.requestApps();
+            return true;
+        }
+        return super.dispatchKeyEvent(event);
     }
     @Override public void onEnterAnimationComplete(){
         super.onEnterAnimationComplete();
@@ -243,8 +252,9 @@ public final class MainActivity extends Activity {
         SharedPreferences.Editor saved=returnFeedback.edit().putLong("left_at",elapsed).putInt("boot",currentBoot())
             .putLong("boot_epoch",System.currentTimeMillis()-elapsed);
         if(origin!=null){
-            saved.putString("origin_id",origin.id).putInt("origin_row",view==null?0:view.gridFirstRow);
-        }else if(!pending)saved.remove("origin_id").remove("origin_row");
+            saved.putString("origin_id",origin.id).putInt("origin_row",view.gridFirstRow)
+                .putBoolean("origin_drawer",view.lastExternalInDrawer).putBoolean("origin_dock",view.lastExternalDock);
+        }else if(!pending)saved.remove("origin_id").remove("origin_row").remove("origin_drawer").remove("origin_dock");
         saved.apply();
     }
     @Override protected void onStop(){
@@ -287,8 +297,8 @@ public final class MainActivity extends Activity {
             view.drawer.value,view.drawer.target,view.menu!=null,view.closingMenu!=null,
             view.launchingTile!=null,view.returningTile!=null,view.pendingLaunch!=null,view.motionWasActive,
             wallpapers!=null&&wallpapers.optionalTransitionsReady());
-        writer.printf(Locale.ROOT,"%spdmvOS.focus target=%s dialog=%s wifi=%d%n",
-            prefix,view.focusSoundTarget(),view.dialogAction==null?"":view.dialogTitle,controls.wifi);
+        writer.printf(Locale.ROOT,"%spdmvOS.focus target=%s dialog=%s wifi=%d drawer_dock=%b%n",
+            prefix,view.focusSoundTarget(),view.dialogAction==null?"":view.dialogTitle,controls.wifi,view.focusDrawerDock);
         if(updater!=null)writer.printf(Locale.ROOT,"%spdmvOS.update state=%s version=%s progress=%d%n",
             prefix,updater.state(),updater.version(),updater.progress());
         int count=(int)Math.min(view.pacingSamples,view.pacingIntervals.length);
@@ -419,7 +429,8 @@ public final class MainActivity extends Activity {
         private long returnWaitingSince,returnVisibleAt;
         private final Runnable returnReadyTimeout=()->invalidate(),returnWindowReady=()->invalidate(),returnEntryFallback=()->invalidate();
         private float lastExternalCx,lastExternalCy;
-        private boolean lastExternalDock, leftForExternalApp, externalLaunchInProgress;
+        private boolean lastExternalDock,lastExternalInDrawer,leftForExternalApp,externalLaunchInProgress;
+        private boolean appsRequested,appsNeedsHome;
         private Tile launchingTile;
         private Runnable pendingLaunch;
         private boolean launchDispatched;
@@ -919,7 +930,9 @@ public final class MainActivity extends Activity {
                 headerFocusSuppressed=suppressed;headerClock=clock();headerWifi=controls.wifi;headerSolar=solar.size();headerStartup=startupReveal.value;headerStamp=headerClock+":"+headerWifi+":"+headerSolar+":"+headerStartup;headerNode.invalidate();
             }
         }
-        @Override protected void advanceFrame(long frameTimeNanos){startVisibleReturn();frame(frameTimeNanos);syncTileNodes();syncHeader();}
+        @Override protected void advanceFrame(long frameTimeNanos){
+            startVisibleReturn();frame(frameTimeNanos);syncTileNodes();syncHeader();openRequestedApps();
+        }
         @Override protected Rect overlayViewport(){
             RectF box=null;
             Tile moving=returningTile!=null?returningTile:launchingTile;
@@ -1837,7 +1850,28 @@ public final class MainActivity extends Activity {
             gridFocus=firstApplication?0:UiGeometry.belowDock(dockFocus,0,catalog.grid.size());
             gridFirstRow=0;gridScroll.aim(0f);drawer.aim(1f,MotionProfile.DRAWER_OPEN_K,MotionProfile.DRAWER_OPEN_D);invalidate();
         }
+        private void requestApps(){
+            cancelHeldInput();closeMenu();stopMove();replaceSlot=-1;
+            if(dialogAction!=null)dismissDialog();
+            if(launchingTile!=null&&!launchDispatched)resetLaunchMotion();
+            if(!resumed||!hasWindowFocus()){
+                appsNeedsHome=true;
+                exitDrawer();
+                settleDrawerPage();
+            }
+            appsRequested=true;invalidate();
+        }
+        private void openRequestedApps(){
+            if(!appsRequested||!resumed||!hasWindowFocus()||!startupStarted
+                    ||startupReveal.busy()||launchingTile!=null||returningTile!=null)return;
+            if(appsNeedsHome&&android.os.SystemClock.uptimeMillis()<returnVisibleAt){
+                postInvalidateOnAnimation();return;
+            }
+            appsRequested=false;appsNeedsHome=false;
+            if(page==0){enterDrawer(true);updateFocus();}
+        }
         private void showHomeFromSystem(){
+            appsRequested=false;appsNeedsHome=false;
             cancelHeldInput();closeMenu();stopMove();
             if(dialogAction!=null)dismissDialog();
             if(returningTile!=null||leftForExternalApp||(pendingReturnFeedback()&&returnFeedback.contains("origin_id"))){updateFocus();return;}
@@ -2362,7 +2396,8 @@ public final class MainActivity extends Activity {
             if(action==null)return false;
             // Resolve the actual source once; the tile might be in the App List,
             // and its position must not change while Android switches Activities.
-            lastExternalDock=(page==0||focusDrawerDock);
+            lastExternalInDrawer=page==1;
+            lastExternalDock=!lastExternalInDrawer||focusDrawerDock;
             lastExternalCx=UiGeometry.centerX(lastExternalDock?dockFocus:gridFocus%6);
             lastExternalCy=lastExternalDock?docTop()+UiGeometry.DOCK_HEIGHT*.5f:
                 UiGeometry.rowTop(gridFocus/6,gridScroll.value)+UiGeometry.TILE_MAX_HEIGHT/2f;
@@ -2404,19 +2439,27 @@ public final class MainActivity extends Activity {
         private void settleReturnState(SpringValue spring,float value){spring.value=value;spring.target=value;spring.velocity=0f;}
         private void restoreReturnContext(Tile tile){
             int dock=catalog.dock.indexOf(tile),grid=catalog.grid.indexOf(tile);
-            focusHeader=false;focusDrawerDock=false;
-            if(dock>=0){page=0;dockFocus=dock;}
+            focusHeader=false;
+            boolean useDock=dock>=0&&(lastExternalDock||grid<0);
+            page=useDock&&!lastExternalInDrawer?0:1;
+            focusDrawerDock=useDock&&page==1;
+            gridFirstRow=Math.max(0,Math.min(gridFirstRow,
+                (catalog.grid.size()+5)/6-UiGeometry.VISIBLE_ROWS));
+            if(useDock)dockFocus=dock;
             else if(grid>=0){
-                page=1;gridFocus=grid;
+                gridFocus=grid;
                 if(grid/6<gridFirstRow||grid/6>=gridFirstRow+UiGeometry.VISIBLE_ROWS)
                     gridFirstRow=Math.max(0,grid/6-UiGeometry.VISIBLE_ROWS+1);
-                settleReturnState(gridScroll,gridFirstRow);
             }
+            settleReturnState(gridScroll,gridFirstRow);
+            settleDrawerPage();
+            startupStarted=true;settleReturnState(startupReveal,1f);updateFocus();
+        }
+        private void settleDrawerPage(){
             float progress=page==1?1f:0f;
             settleReturnState(drawer,progress);settleReturnState(listBlur,progress);
             settleReturnState(drawerFlow.dock,progress);
             for(SpringValue row:drawerFlow.rows)settleReturnState(row,progress);
-            startupStarted=true;settleReturnState(startupReveal,1f);updateFocus();
         }
         private void deferReturnUntilVisible(){
             returnVisibleAt=android.os.SystemClock.uptimeMillis()+120;
@@ -2442,9 +2485,11 @@ public final class MainActivity extends Activity {
                 String origin=returnFeedback.getString("origin_id",null);
                 lastExternalTile=origin==null?null:catalog.lookup(origin);
                 gridFirstRow=returnFeedback.getInt("origin_row",0);
+                lastExternalDock=returnFeedback.getBoolean("origin_dock",catalog.dock.contains(lastExternalTile));
+                lastExternalInDrawer=returnFeedback.getBoolean("origin_drawer",!lastExternalDock);
             }
             if(lastExternalTile!=null&&(lastExternalTile.retired||lastExternalTile.packageName==null))lastExternalTile=null;
-            if(cameFromApp&&lastExternalTile!=null){
+            if(cameFromApp&&lastExternalTile!=null&&!appsNeedsHome){
                 overridePendingTransition(0,0);
                 restoreReturnContext(lastExternalTile);
                 returningTile=lastExternalTile;returnWaiting=true;returnDraws=0;

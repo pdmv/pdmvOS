@@ -1,1 +1,4 @@
-<resources />
+<resources>
+    <string name="apps_key_service_name">pdmvOS · Nút Apps</string>
+    <string name="apps_key_service_description">Dùng nút Apps trên remote để mở danh sách ứng dụng pdmvOS. Dịch vụ chỉ xử lý phím Apps và không đọc nội dung màn hình.</string>
+</resources>

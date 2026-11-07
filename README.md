@@ -17,7 +17,7 @@ Launcher dùng remote cho Android TV và Google TV, với Dock sáu ô tùy ch�
 
 ## Điều khiển
 
-- **Ứng dụng:** Nhấn giữ **OK** trên ứng dụng để ghim, bỏ ghim hoặc sắp xếp.
+- **Ứng dụng:** Nhấn **Apps** để mở danh sách. Trên TV chuyển phím này cho launcher hệ thống, bật **pdmvOS · Nút Apps** trong **Cài đặt TV → Hỗ trợ tiếp cận**. Nhấn giữ **OK** trên ứng dụng để ghim, bỏ ghim hoặc sắp xếp.
 - **Đầu vào:** Nhấn **OK** để mở hoặc đóng danh sách, nhấn **Xuống** để vào danh sách. Chọn một đầu vào để mở hộp thoại xác nhận.
 - **Wi-Fi:** Khi Wi-Fi đang bật, nhấn nút Wi-Fi để mở hộp thoại xác nhận. Nhấn giữ để mở cài đặt Wi-Fi của TV.
 - **Cập nhật:** Nhấn giữ **Cài đặt** để kiểm tra và tải bản mới. Launcher xác minh APK trước khi chuyển sang màn hình xác nhận cài đặt của Android. Lần đầu, TV có thể yêu cầu cho phép pdmvOS cài ứng dụng từ nguồn này.

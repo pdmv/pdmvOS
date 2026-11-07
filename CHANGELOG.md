@@ -1,5 +1,11 @@
 # Changelog
 
+## 3.1.6
+
+- Nút Apps mở danh sách bằng hiệu ứng trượt lên. Nếu đang trong ứng dụng, pdmvOS hiện Home trước khi mở danh sách.
+- Thêm tùy chọn hỗ trợ phím Apps cho TV chuyển phím này cho launcher hệ thống.
+- Khi về từ ứng dụng, khôi phục Home hoặc danh sách cùng ô Dock đã dùng để mở.
+
 ## 3.1.5
 
 - Cập nhật từ GitHub Releases ngay trong launcher. Kiểm tra dung lượng, phiên bản, SHA-256 và chữ ký, giữ tệp hợp lệ để dùng lại, rồi mở trình cài Android để xác nhận.
