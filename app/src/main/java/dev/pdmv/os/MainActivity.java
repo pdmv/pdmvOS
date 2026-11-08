@@ -14,7 +14,10 @@ import android.os.Looper;
 import android.provider.Settings;
 import android.view.KeyEvent;
 import android.view.MotionEvent;
+import android.view.Surface;
+import android.view.TextureView;
 import android.view.View;
+import android.view.ViewGroup;
 import android.view.Gravity;
 import android.widget.TextView;
 import android.util.Log;
@@ -142,6 +145,19 @@ public final class MainActivity extends Activity {
             view.setFocusableInTouchMode(true);view.requestFocus();
             // Do expensive app-art rasterization only after Home has produced its first frame.
             view.scheduleArtworkWarmup();
+            AirPlayReceiver receiver=AirPlayReceiver.getInstance();
+            receiver.setListener(new AirPlayReceiver.Listener(){
+                @Override public void onStateChanged(int state){
+                    if(state==AirPlayReceiver.STATE_MIRRORING)view.openAirPlayDisplay();
+                    else view.closeAirPlayDisplay();
+                }
+                @Override public void onVideoDimensionsChanged(int width,int height){
+                    view.updateAirPlayVideoDimensions(width,height);
+                }
+            });
+            view.post(()->{
+                if(!isDestroyed())receiver.start(this,prefs.getInt("airplay_mode",AirPlayReceiver.MODE_ALL));
+            });
             loadSolarAsync();
             Log.i(TAG,"startup.complete");
             handleWallpaperIntent(getIntent());
@@ -319,7 +335,7 @@ public final class MainActivity extends Activity {
             prefix,view.pacingSamples,intervals[(count-1)/2]/1e6,
             intervals[(int)Math.ceil(count*.95)-1]/1e6,view.pacingMisses,view.sceneDrawCount);
     }
-    @Override protected void onDestroy(){resumed=false;if(uiSounds!=null)uiSounds.close();if(packageEventsRegistered){unregisterReceiver(packageEvents);packageEventsRegistered=false;}if(installTracker!=null)installTracker.close();if(updater!=null)updater.close();if(view!=null)view.detach();if(wallpapers!=null)wallpapers.close();super.onDestroy();}
+    @Override protected void onDestroy(){resumed=false;AirPlayReceiver.getInstance().stop();AirPlayReceiver.getInstance().setListener(null);if(uiSounds!=null)uiSounds.close();if(packageEventsRegistered){unregisterReceiver(packageEvents);packageEventsRegistered=false;}if(installTracker!=null)installTracker.close();if(updater!=null)updater.close();if(view!=null)view.detach();if(wallpapers!=null)wallpapers.close();super.onDestroy();}
     private void open(Tile tile){
         if(tile==null)return;
         if(tile.installPlaceholder){toast("Ứng dụng đang được cài đặt");return;}
@@ -430,6 +446,12 @@ public final class MainActivity extends Activity {
         private final SpringValue menuContent=new SpringValue(0f,720f,52f);
         private final SpringValue menuSelection=new SpringValue(0f,MotionProfile.MENU_SELECTION_K,MotionProfile.MENU_SELECTION_D);
         private final SpringValue menuRowEmphasis=new SpringValue(0f,440f,42f);
+        private final SpringValue airplayCheckRow=new SpringValue(0f,MotionProfile.MENU_SELECTION_K,MotionProfile.MENU_SELECTION_D);
+        private final SpringValue airplayCheckScale=new SpringValue(1f,340f,26f);
+        private TextureView airPlayTexture;
+        private View airPlayBackdrop;
+        private boolean airPlayDisplayVisible;
+        private int airPlayWidth=1920,airPlayHeight=1080;
         private final SpringValue launchReveal=new SpringValue(0f,MotionProfile.LAUNCH_K,MotionProfile.LAUNCH_D);
         // A shared progress spring drives backdrop dimming, position and scale together
         // when a third-party application hands control back to pdmvOS.
@@ -478,7 +500,13 @@ public final class MainActivity extends Activity {
         private long lastFrame=0L;
         private boolean motionWasActive;
         private final Runnable holdAction=()->{
-            if(holdingOK && menu==null){longPressed=true;if(focusHeader)headerHold();else openTileMenu();}
+            if(holdingOK){
+                if(menu==null){longPressed=true;if(focusHeader)headerHold();else openTileMenu();}
+                else if(menu.selected>=0&&menu.selected<menu.items.size()){
+                    Item it=menu.items.get(menu.selected);
+                    if(it.holdPerform!=null){longPressed=true;pressStartedInMenu=false;it.holdPerform.run();}
+                }
+            }
         };
         private final Runnable clockTick=new Runnable(){
             @Override public void run(){
@@ -736,7 +764,7 @@ public final class MainActivity extends Activity {
             listBlur.aim(drawer.target,drawer.target==0f?900f:110f,drawer.target==0f?60f:22f);boolean blurWasMoving=listBlur.busy();
             active=listBlur.update(dt)|active;if(blurWasMoving)invalidateScene();
             gridFirstRow=Math.max(0,Math.min(gridFirstRow,Math.max(0,(catalog.grid.size()+5)/6-UiGeometry.VISIBLE_ROWS)));gridScroll.aim(gridFirstRow);
-            active=tilePress.update(dt)|drawer.update(dt)|gridScroll.update(dt)|press.update(dt)|headerFocusAnim.update(dt)|menuReveal.update(dt)|menuContent.update(dt)|updateMenuSelection(dt)|launchReveal.update(dt)|((returnWaiting||!resumed||!hasWindowFocus())?false:returnReveal.update(dt))|active;
+            active=tilePress.update(dt)|drawer.update(dt)|gridScroll.update(dt)|press.update(dt)|headerFocusAnim.update(dt)|menuReveal.update(dt)|menuContent.update(dt)|updateMenuSelection(dt)|airplayCheckRow.update(dt)|airplayCheckScale.update(dt)|launchReveal.update(dt)|((returnWaiting||!resumed||!hasWindowFocus())?false:returnReveal.update(dt))|active;
             if(returningTile!=null && !returnWaiting && !returnReveal.busy()){
                 Log.i(TAG,"return.motion.end source="+returningTile.id+" visible_frames="+returnDraws);returningTile=null;
             }
@@ -921,7 +949,7 @@ public final class MainActivity extends Activity {
             startVisibleReturn();frame(frameTimeNanos);syncTileNodes();syncHeader();openRequestedApps();
         }
         @Override protected Rect overlayViewport(){
-            RectF box=null;
+            RectF box=airPlayDisplayVisible?new RectF(730,20,1190,100):null;
             Tile moving=returningTile!=null?returningTile:launchingTile;
             if(moving!=null){
                 if(returningTile!=null)readTileBounds(moving,morphOrigin);
@@ -955,7 +983,7 @@ public final class MainActivity extends Activity {
             int saved=c.save();c.translate(canvasLeft,canvasTop);c.scale(canvasScale,canvasScale);
             glassMaterials.beginSurface(c);
             try{
-
+                if(airPlayDisplayVisible)drawAirPlayOverlay(c);
                 if(menu!=null||closingMenu!=null)drawMenu(c);
                 drawToast(c);drawDialog(c);
                 if(launchingTile!=null && launchReveal.value>.005f)drawLaunchMorph(c);
@@ -977,7 +1005,7 @@ public final class MainActivity extends Activity {
                 drawHomeAndDrawer(real);
                 real.restoreToCount(saved);
                 // Targets may change during drawing, so never miss the first VSYNC after focus changes.
-                if(tilePress.busy()||drawer.busy()||gridScroll.busy()||press.busy()||headerFocusAnim.busy()||menuReveal.busy()||menuContent.busy()||menuSelection.busy()||launchReveal.busy()||returnReveal.busy())
+                if(tilePress.busy()||drawer.busy()||gridScroll.busy()||press.busy()||headerFocusAnim.busy()||menuReveal.busy()||menuContent.busy()||menuSelection.busy()||airplayCheckRow.busy()||airplayCheckScale.busy()||launchReveal.busy()||returnReveal.busy())
                     postInvalidateOnAnimation();
             }catch(RuntimeException | LinkageError | AssertionError drawError){
                 renderFailure=drawError;
@@ -1430,6 +1458,7 @@ public final class MainActivity extends Activity {
         private void openInputMenu(){
             RectF button=headerRect(2);
             Menu m=new Menu("Đầu vào",button.centerX(),button.centerY());m.sourceHeader=2;m.selected=-1;
+            m.add("AirPlay",this::handleAirPlayClick,this::openAirPlayModeMenu);
             for(android.media.tv.TvInputInfo input:controls.discoverInputs()){
                 String name=input.loadLabel(MainActivity.this).toString();
                 CharSequence custom=input.loadCustomLabel(MainActivity.this);if(custom!=null&&custom.length()>0)name=custom.toString();
@@ -1439,6 +1468,126 @@ public final class MainActivity extends Activity {
             }
             if(m.items.isEmpty()){showToast("Không tìm thấy đầu vào nào");return;}
             showMenu(m);
+        }
+        private static final String[] AIRPLAY_MODES={"Màn hình và âm thanh","Chỉ màn hình","Chỉ âm thanh","Tắt"};
+
+        private void openAirPlayModeMenu(){
+            RectF button=headerRect(2);
+            Menu m=new Menu("Chế độ AirPlay",button.centerX(),button.centerY());
+            m.sourceHeader=2;
+            m.isAirPlayModeMenu=true;
+            int curMode=AirPlayReceiver.getInstance().getCurrentMode();
+            airplayCheckRow.value=curMode;
+            airplayCheckRow.target=curMode;
+            airplayCheckScale.value=1f;
+            airplayCheckScale.target=1f;
+            for(int i=0;i<AIRPLAY_MODES.length;i++){
+                int mode=i;
+                m.add(AIRPLAY_MODES[i],()->setAirPlayMode(mode));
+            }
+            m.selected=curMode;
+            showMenu(m);
+        }
+        private void setAirPlayMode(int mode){
+            if(!AirPlayReceiver.getInstance().start(MainActivity.this,mode)){
+                showToast("AirPlay · Không thể bật");
+                return;
+            }
+            prefs.edit().putInt("airplay_mode",mode).apply();
+            airplayCheckRow.aim(mode);
+            airplayCheckScale.value=.5f;
+            airplayCheckScale.aim(1f);
+            showToast("AirPlay · "+AIRPLAY_MODES[mode]);
+            invalidate();
+        }
+        private void handleAirPlayClick(){
+            AirPlayReceiver receiver=AirPlayReceiver.getInstance();
+            if(receiver.getCurrentMode()==AirPlayReceiver.MODE_OFF){
+                setAirPlayMode(AirPlayReceiver.MODE_ALL);
+                return;
+            }
+            int state=receiver.getCurrentState();
+            if(state==AirPlayReceiver.STATE_MIRRORING){
+                openAirPlayDisplay();
+            }else{
+                showToast("AirPlay · Chọn "+receiver.getReceiverName());
+            }
+        }
+        void openAirPlayDisplay(){
+            if(airPlayDisplayVisible)return;
+            airPlayDisplayVisible=true;
+            if(airPlayTexture==null){
+                airPlayBackdrop=new View(MainActivity.this);
+                airPlayBackdrop.setBackgroundColor(Color.BLACK);
+                addView(airPlayBackdrop,new ViewGroup.LayoutParams(ViewGroup.LayoutParams.MATCH_PARENT,ViewGroup.LayoutParams.MATCH_PARENT));
+                airPlayTexture=new TextureView(MainActivity.this);
+                airPlayTexture.setSurfaceTextureListener(new TextureView.SurfaceTextureListener(){
+                    @Override public void onSurfaceTextureAvailable(android.graphics.SurfaceTexture st,int w,int h){
+                        AirPlayReceiver.getInstance().setSurface(new Surface(st));
+                    }
+                    @Override public void onSurfaceTextureSizeChanged(android.graphics.SurfaceTexture st,int w,int h){}
+                    @Override public boolean onSurfaceTextureDestroyed(android.graphics.SurfaceTexture st){
+                        AirPlayReceiver.getInstance().setSurface(null);
+                        return true;
+                    }
+                    @Override public void onSurfaceTextureUpdated(android.graphics.SurfaceTexture st){}
+                });
+                addView(airPlayTexture,new ViewGroup.LayoutParams(ViewGroup.LayoutParams.MATCH_PARENT,ViewGroup.LayoutParams.MATCH_PARENT));
+            }
+            airPlayBackdrop.setVisibility(View.VISIBLE);
+            airPlayTexture.setVisibility(View.VISIBLE);
+            if(airPlayTexture.isAvailable())AirPlayReceiver.getInstance().setSurface(new Surface(airPlayTexture.getSurfaceTexture()));
+            invalidate();
+        }
+        void closeAirPlayDisplay(){
+            if(!airPlayDisplayVisible)return;
+            airPlayDisplayVisible=false;
+            if(airPlayTexture!=null){
+                airPlayTexture.setVisibility(View.GONE);
+                airPlayBackdrop.setVisibility(View.GONE);
+                AirPlayReceiver.getInstance().setSurface(null);
+            }
+            invalidate();
+        }
+        @Override protected void onMeasure(int widthSpec,int heightSpec){
+            super.onMeasure(widthSpec,heightSpec);
+            if(airPlayTexture!=null){
+                int w=MeasureSpec.makeMeasureSpec(getMeasuredWidth(),MeasureSpec.EXACTLY);
+                int h=MeasureSpec.makeMeasureSpec(getMeasuredHeight(),MeasureSpec.EXACTLY);
+                airPlayBackdrop.measure(w,h);
+                airPlayTexture.measure(w,h);
+            }
+        }
+        @Override protected void onLayout(boolean changed,int left,int top,int right,int bottom){
+            super.onLayout(changed,left,top,right,bottom);
+            if(airPlayTexture!=null){
+                airPlayBackdrop.layout(0,0,right-left,bottom-top);
+                airPlayTexture.layout(0,0,right-left,bottom-top);
+                updateAirPlayTransform();
+            }
+        }
+        void updateAirPlayVideoDimensions(int width,int height){
+            if(width<=0||height<=0)return;
+            airPlayWidth=width;airPlayHeight=height;
+            updateAirPlayTransform();
+        }
+        private void updateAirPlayTransform(){
+            if(airPlayTexture==null)return;
+            float w=airPlayTexture.getWidth(),h=airPlayTexture.getHeight();
+            if(w<=0||h<=0)return;
+            float scale=Math.min(w/airPlayWidth,h/airPlayHeight);
+            Matrix transform=new Matrix();
+            transform.setScale(scale*airPlayWidth/w,scale*airPlayHeight/h,w*.5f,h*.5f);
+            airPlayTexture.setTransform(transform);
+        }
+        private void drawAirPlayOverlay(Canvas c){
+            float badgeW=350f,badgeH=44f;
+            float badgeX=(UiGeometry.WIDTH-badgeW)*.5f,badgeY=40f;
+            glassMaterials.drawItem(c,badgeX,badgeY,badgeW,badgeH,22f,.9f);
+            configureTextPaint(paint,20f,false);
+            paint.setColor(Color.WHITE);
+            paint.setTextAlign(Paint.Align.CENTER);
+            c.drawText("AirPlay · Nhấn Quay lại để thoát",UiGeometry.WIDTH*.5f,badgeY+28f,paint);
         }
         private final SpringValue clockWidth=new SpringValue(0,240,31),clockChange=new SpringValue(1,180,26.8f);
         private String shownClock="",previousClock="";
@@ -2127,6 +2276,9 @@ public final class MainActivity extends Activity {
             return handled;
         }
         private boolean handleKeyDown(int code,KeyEvent event){
+            if(airPlayDisplayVisible){
+                if(code==KeyEvent.KEYCODE_BACK){closeAirPlayDisplay();return true;}
+            }
             if(dialogAction!=null){
                 if(code==KeyEvent.KEYCODE_BACK){dismissDialog();return true;}
                 if(code==KeyEvent.KEYCODE_DPAD_LEFT||code==KeyEvent.KEYCODE_DPAD_RIGHT){
@@ -2142,12 +2294,21 @@ public final class MainActivity extends Activity {
                 return true;
             }
             if(code==KeyEvent.KEYCODE_DPAD_CENTER||code==KeyEvent.KEYCODE_ENTER||code==KeyEvent.KEYCODE_NUMPAD_ENTER){
-                if(event.getRepeatCount()>0){if(holdingOK&&!longPressed&&menu==null){longPressed=true;handler.removeCallbacks(holdAction);if(focusHeader)headerHold();else openTileMenu();}return true;}
+                if(event.getRepeatCount()>0){
+                    if(holdingOK&&!longPressed){
+                        if(menu==null){longPressed=true;handler.removeCallbacks(holdAction);if(focusHeader)headerHold();else openTileMenu();}
+                        else if(menu.selected>=0&&menu.selected<menu.items.size()){
+                            Item it=menu.items.get(menu.selected);
+                            if(it.holdPerform!=null){longPressed=true;handler.removeCallbacks(holdAction);pressStartedInMenu=false;it.holdPerform.run();}
+                        }
+                    }
+                    return true;
+                }
                 if(!holdingOK){
                     holdingOK=true;longPressed=false;
                     pressStartedInMenu=menu!=null&&menu.selected>=0;
                     press.aim(1f,MotionProfile.PRESS_IN_K,MotionProfile.PRESS_IN_D);
-                    if(menu==null)handler.postDelayed(holdAction,440);
+                    handler.postDelayed(holdAction,440);
                     invalidate();
                 }
                 return true;
@@ -2228,7 +2389,7 @@ public final class MainActivity extends Activity {
                 if(moveMode){holdingOK=false;press.aim(0f,MotionProfile.PRESS_OUT_K,MotionProfile.PRESS_OUT_D);stopMove();return true;}
                 if(holdingOK){
                     holdingOK=false;handler.removeCallbacks(holdAction);press.aim(0f,MotionProfile.PRESS_OUT_K,MotionProfile.PRESS_OUT_D);
-                    if(pressStartedInMenu){if(menu!=null)selectMenuItem();}
+                    if(pressStartedInMenu){if(menu!=null&&!longPressed)selectMenuItem();}
                     else if(!longPressed&&(menu==null||menu.selected<0))shortPress();
                     pressStartedInMenu=false;
                     longPressed=false;invalidate();
@@ -2238,14 +2399,16 @@ public final class MainActivity extends Activity {
             return super.onKeyUp(code,event);
         }
         private static final class Item {
-            final String title;final Runnable perform;
-            Item(String title,Runnable perform){this.title=title;this.perform=perform;}
+            final String title;final Runnable perform;final Runnable holdPerform;
+            Item(String title,Runnable perform,Runnable holdPerform){this.title=title;this.perform=perform;this.holdPerform=holdPerform;}
+            Item(String title,Runnable perform){this(title,perform,null);}
         }
         private final class Menu {
             String title;final ArrayList<Item> items=new ArrayList<>();int selected=0;
             float left,top;
             boolean nearTile;
             int sourceHeader=-1;
+            boolean isAirPlayModeMenu;
             boolean anchored(){return nearTile||sourceHeader>=0;}
             Tile sourceTile;
             final MenuMotion.Frame motion=new MenuMotion.Frame();
@@ -2254,6 +2417,7 @@ public final class MainActivity extends Activity {
             Bitmap surface,header;final ArrayList<Bitmap> labels=new ArrayList<>();
             Menu(String title,float anchorX,float anchorY){this.title=title;this.left=anchorX;this.top=anchorY;}
             void add(String title,Runnable action){items.add(new Item(title,action));}
+            void add(String title,Runnable action,Runnable holdAction){items.add(new Item(title,action,holdAction));}
         }
         private void choosePinSlot(){
             replaceSlot=dockFocus;enterDrawer(false);gridFocus=0;showToast("Chọn ứng dụng để ghim vào Dock");
@@ -2491,14 +2655,17 @@ public final class MainActivity extends Activity {
             image.prepareToDraw();textTextures.put(key,image);return image;
         }
         private Bitmap menuLabel(String label,float size,boolean bold,int height){
-            String key="clear|"+size+"|"+bold+"|"+label;
+            return menuLabel(label,size,bold,height,0f);
+        }
+        private Bitmap menuLabel(String label,float size,boolean bold,int height,float rightPadding){
+            String key="clear|"+size+"|"+bold+"|"+label+"|"+rightPadding;
             Bitmap cached=menuTextures.get(key);if(cached!=null)return cached;
             Bitmap image=Bitmap.createBitmap((int)MENU_WIDTH,height,Bitmap.Config.ARGB_8888);
             Canvas c=new Canvas(image);
             configureTextPaint(measurePaint,size,bold);Paint.FontMetrics fm=measurePaint.getFontMetrics();
             float baseline=bold?UiGeometry.POPUP_TITLE_INSET-fm.ascent:(MENU_ITEM_HEIGHT-fm.ascent-fm.descent)/2f;
             float inset=bold?UiGeometry.POPUP_TITLE_INSET:MENU_PAD+UiGeometry.POPUP_TEXT_PADDING;
-            drawSettingsText(c,label,inset,baseline,size,fg(),bold,MENU_WIDTH-2*inset);
+            drawSettingsText(c,label,inset,baseline,size,fg(),bold,MENU_WIDTH-2*inset-rightPadding);
             image.prepareToDraw();menuTextures.put(key,image);return image;
         }
         private void prepareMenu(Menu m){
@@ -2511,7 +2678,7 @@ public final class MainActivity extends Activity {
                 m.surface.prepareToDraw();menuTextures.put(key,m.surface);
             }
             m.header=menuLabel(m.title,POPUP_TITLE_SIZE,true,(int)MENU_HEADER);
-            for(Item item:m.items)m.labels.add(menuLabel(item.title,POPUP_TEXT_SIZE,false,(int)MENU_ROW));
+            for(Item item:m.items)m.labels.add(menuLabel(item.title,POPUP_TEXT_SIZE,false,(int)MENU_ROW,m.isAirPlayModeMenu?72f:0f));
         }
         private void menuBitmap(Canvas c,Bitmap bitmap,float x,float y,float opacity){
             paint.reset();paint.setAntiAlias(true);paint.setFilterBitmap(true);paint.setDither(true);
@@ -2561,6 +2728,21 @@ public final class MainActivity extends Activity {
                 c.scale(focusScale,focusScale,x+UiGeometry.POPUP_TEXT_PADDING,centerY);
                 menuBitmap(c,m.labels.get(i),target.left,y,alpha);
                 c.restoreToCount(row);
+            }
+            if(m.isAirPlayModeMenu){
+                float checkX=target.right-MENU_PAD-UiGeometry.POPUP_TEXT_PADDING-12f;
+                float checkY=target.top+MENU_HEADER+airplayCheckRow.value*MENU_ROW+MENU_ITEM_HEIGHT/2f;
+                float focus=(m!=menu||dialogAction==null)
+                    ?menuRowEmphasis.value*Math.max(0f,1f-Math.abs(airplayCheckRow.value-menuSelection.value)):0f;
+                float focusScale=UiGeometry.popupItemScale(focus,0f);
+                float zoom=UiGeometry.popupItemScale(focus,pressed);
+                float checkSize=34f*UiGeometry.clamp(airplayCheckScale.value,.2f,2f);
+                int check=c.save();
+                c.scale(zoom/focusScale,zoom/focusScale,target.centerX(),checkY);
+                c.scale(focusScale,focusScale,checkX,checkY);
+                int checkTint=Color.argb(Math.round(255f*alpha),255,255,255);
+                drawSolar(c,"check",checkX,checkY,checkSize,checkTint);
+                c.restoreToCount(check);
             }
             c.restoreToCount(popup);c.restoreToCount(transform);
         }

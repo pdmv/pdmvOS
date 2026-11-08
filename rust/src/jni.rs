@@ -12,9 +12,11 @@ pub type jfloat = f32;
 pub type jdouble = f64;
 pub type jsize = i32;
 pub type jobject = *mut c_void;
+pub type jbyte = i8;
 pub type jclass = jobject;
 pub type jstring = jobject;
 pub type jarray = jobject;
+pub type jbyteArray = jarray;
 pub type jintArray = jarray;
 pub type jlongArray = jarray;
 pub type jfloatArray = jarray;
@@ -30,11 +32,14 @@ const IDX_FIND_CLASS: usize = 6;
 const IDX_THROW_NEW: usize = 14;
 const IDX_NEW_STRING_UTF: usize = 167;
 const IDX_GET_ARRAY_LENGTH: usize = 171;
+const IDX_NEW_BYTE_ARRAY: usize = 176;
 const IDX_GET_INT_ARRAY_ELEMENTS: usize = 187;
 const IDX_RELEASE_INT_ARRAY_ELEMENTS: usize = 195;
+const IDX_GET_BYTE_ARRAY_REGION: usize = 200;
 const IDX_GET_INT_ARRAY_REGION: usize = 203;
 const IDX_GET_LONG_ARRAY_REGION: usize = 204;
 const IDX_GET_FLOAT_ARRAY_REGION: usize = 205;
+const IDX_SET_BYTE_ARRAY_REGION: usize = 208;
 const IDX_SET_INT_ARRAY_REGION: usize = 211;
 const IDX_SET_LONG_ARRAY_REGION: usize = 212;
 const IDX_SET_FLOAT_ARRAY_REGION: usize = 213;
@@ -43,6 +48,11 @@ type FnFindClass = unsafe extern "system" fn(JNIEnv, *const c_char) -> jclass;
 type FnThrowNew = unsafe extern "system" fn(JNIEnv, jclass, *const c_char) -> jint;
 type FnNewStringUTF = unsafe extern "system" fn(JNIEnv, *const c_char) -> jstring;
 type FnGetArrayLength = unsafe extern "system" fn(JNIEnv, jarray) -> jsize;
+type FnNewByteArray = unsafe extern "system" fn(JNIEnv, jsize) -> jbyteArray;
+type FnGetByteArrayRegion =
+    unsafe extern "system" fn(JNIEnv, jbyteArray, jsize, jsize, *mut jbyte);
+type FnSetByteArrayRegion =
+    unsafe extern "system" fn(JNIEnv, jbyteArray, jsize, jsize, *const jbyte);
 type FnGetIntArrayElements =
     unsafe extern "system" fn(JNIEnv, jintArray, *mut jboolean) -> *mut jint;
 type FnReleaseIntArrayElements =
@@ -103,6 +113,20 @@ unsafe fn get_float_vec(env: JNIEnv, arr: jfloatArray) -> Vec<f32> {
     if len > 0 {
         let get_region: FnGetFloatArrayRegion = vtable_fn(env, IDX_GET_FLOAT_ARRAY_REGION);
         get_region(env, arr, 0, len as jsize, buf.as_mut_ptr());
+    }
+    buf
+}
+
+unsafe fn get_byte_vec(env: JNIEnv, arr: jbyteArray) -> Vec<u8> {
+    if arr.is_null() {
+        return Vec::new();
+    }
+    let get_len: FnGetArrayLength = vtable_fn(env, IDX_GET_ARRAY_LENGTH);
+    let len = get_len(env, arr).max(0) as usize;
+    let mut buf = vec![0u8; len];
+    if len > 0 {
+        let get_region: FnGetByteArrayRegion = vtable_fn(env, IDX_GET_BYTE_ARRAY_REGION);
+        get_region(env, arr, 0, len as jsize, buf.as_mut_ptr() as *mut jbyte);
     }
     buf
 }
@@ -1236,4 +1260,72 @@ pub unsafe extern "system" fn Java_dev_pdmv_os_NativeCore_slotLayoutOp(
         );
     }
     new_grid_len as jint
+}
+
+// =========================================================================
+// AirPlay Receiver JNI Bindings
+// =========================================================================
+
+#[no_mangle]
+pub unsafe extern "system" fn Java_dev_pdmv_os_NativeCore_airplayStart(
+    env: JNIEnv,
+    _class: jclass,
+    mode: jint,
+    server_name: jbyteArray,
+    device_id: jbyteArray,
+) -> jbyteArray {
+    let Ok(name) = String::from_utf8(get_byte_vec(env, server_name)) else {
+        return core::ptr::null_mut();
+    };
+    let Ok(id) = get_byte_vec(env, device_id).try_into() else {
+        return core::ptr::null_mut();
+    };
+    airplay_bytes(env, crate::airplay::global_start(mode, name, id))
+}
+
+#[no_mangle]
+pub extern "system" fn Java_dev_pdmv_os_NativeCore_airplayStop(_env: JNIEnv, _class: jclass) {
+    crate::airplay::global_stop();
+}
+
+#[no_mangle]
+pub extern "system" fn Java_dev_pdmv_os_NativeCore_airplayGetState(_env: JNIEnv, _class: jclass) -> jint {
+    crate::airplay::global_get_state()
+}
+
+#[no_mangle]
+pub extern "system" fn Java_dev_pdmv_os_NativeCore_airplayVideoFormat(_env: JNIEnv, _class: jclass) -> jint {
+    crate::airplay::global_video_format()
+}
+
+#[no_mangle]
+pub extern "system" fn Java_dev_pdmv_os_NativeCore_airplayResetVideo(_env: JNIEnv, _class: jclass) {
+    crate::airplay::global_reset_video();
+}
+
+unsafe fn airplay_bytes(env: JNIEnv, bytes: Option<Vec<u8>>) -> jbyteArray {
+    let Some(bytes) = bytes else { return core::ptr::null_mut() };
+    let new_arr: FnNewByteArray = vtable_fn(env, IDX_NEW_BYTE_ARRAY);
+    let set_region: FnSetByteArrayRegion = vtable_fn(env, IDX_SET_BYTE_ARRAY_REGION);
+    let arr = new_arr(env, bytes.len() as jsize);
+    if !arr.is_null() {
+        set_region(env, arr, 0, bytes.len() as jsize, bytes.as_ptr().cast());
+    }
+    arr
+}
+
+#[no_mangle]
+pub unsafe extern "system" fn Java_dev_pdmv_os_NativeCore_airplayPollVideo(
+    env: JNIEnv,
+    _class: jclass,
+) -> jbyteArray {
+    airplay_bytes(env, crate::airplay::global_poll_video())
+}
+
+#[no_mangle]
+pub unsafe extern "system" fn Java_dev_pdmv_os_NativeCore_airplayPollAudio(
+    env: JNIEnv,
+    _class: jclass,
+) -> jbyteArray {
+    airplay_bytes(env, crate::airplay::global_poll_audio(4096))
 }
