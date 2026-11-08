@@ -10,6 +10,8 @@ trap 'rm -rf "$bundle"' EXIT
 root="$bundle/$name"
 mkdir -p "$root/.cargo" dist
 git archive HEAD | tar -xf - -C "$root"
+mkdir -p "$root/third_party"
+cp rust/target/airplay-aac/ffmpeg-7.1.5.tar.xz "$root/third_party/"
 (
   cd "$root"
   cargo vendor --locked --manifest-path rust/Cargo.toml vendor > .cargo/config.toml

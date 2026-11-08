@@ -1,5 +1,13 @@
 # Changelog
 
+## 4.0.2
+
+- AirPlay tự hiện khi đang mở ứng dụng. Khung chiếu trượt xuống sau hiệu ứng thu ứng dụng và co giãn cùng thông báo, giữ trọn hình theo tỷ lệ gốc.
+- Phát hình qua lớp video riêng của Android và tối ưu nhịp phát khi mạng dao động. Hỗ trợ âm thanh AAC-ELD từ phiên phản chiếu.
+- Khôi phục bộ giải mã ở khung đồng bộ tiếp theo khi lớp hiển thị được tạo lại.
+- Bo góc khung AirPlay khi thu nhỏ, vuông dần khi phóng to và dùng lời nhắc “Nhấn Back để dừng”.
+- Mở menu AirPlay bằng một lần nhấn, chuyển cảnh hai chiều với danh sách Đầu vào và giữ chữ cố định khi đổi focus trong menu.
+
 ## 4.0.1
 
 - Thêm bộ thu AirPlay bằng Rust cho phản chiếu màn hình và phát âm thanh. TV xuất hiện với tên pdmvOS trên cùng mạng nội bộ.

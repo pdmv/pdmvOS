@@ -2,11 +2,6 @@ package dev.pdmv.os;
 
 import android.content.Context;
 import android.content.SharedPreferences;
-import android.media.AudioFormat;
-import android.media.AudioManager;
-import android.media.AudioTrack;
-import android.media.MediaCodec;
-import android.media.MediaFormat;
 import android.net.nsd.NsdManager;
 import android.net.nsd.NsdServiceInfo;
 import android.os.Handler;
@@ -19,37 +14,33 @@ import java.nio.charset.StandardCharsets;
 import java.security.SecureRandom;
 import java.util.ArrayList;
 
-/** Android playback and lifecycle bridge for the Rust AirPlay receiver. */
+/** Registers the Rust receiver with Android and delivers status to the launcher. */
 final class AirPlayReceiver {
     private static final String TAG = "AirPlayReceiver";
     private static final AirPlayReceiver INSTANCE = new AirPlayReceiver();
 
     static final int MODE_ALL = 0;
     static final int MODE_OFF = 3;
-    static final int STATE_IDLE = 0;
-    static final int STATE_MIRRORING = 1;
+    static final int IDLE = 0;
+    static final int CONNECTING = 1;
+    static final int PLAYING = 2;
+    static final int FAILED = 3;
 
     interface Listener {
-        void onStateChanged(int state);
-        void onVideoDimensionsChanged(int width, int height);
+        void onVideoState(int state, int width, int height, int session);
     }
 
     static AirPlayReceiver getInstance() { return INSTANCE; }
 
     private final Handler main = new Handler(Looper.getMainLooper());
-    private final Object playback = new Object();
-
-    private volatile Thread worker;
+    private final int[] status = new int[4];
+    private final int[] lastStatus = new int[4];
+    private final Runnable poll = this::pollStatus;
     private NsdManager discovery;
     private final ArrayList<Registration> registrations = new ArrayList<>();
     private int currentMode = MODE_OFF;
     private String receiverName;
     private Listener listener;
-    private Surface surface;
-    private MediaCodec decoder;
-    private AudioTrack audio;
-    private int codec;
-    private int failedCodec;
 
     private AirPlayReceiver() {}
 
@@ -59,7 +50,21 @@ final class AirPlayReceiver {
 
     String getReceiverName() { return receiverName; }
 
-    int getCurrentState() { return NativeCore.airplayGetState(); }
+    private void pollStatus() {
+        if (currentMode == MODE_OFF) return;
+        NativeCore.airplayStatus(status);
+        main.postDelayed(poll, status[0] == IDLE ? 150 : 32);
+        if (!java.util.Arrays.equals(status, lastStatus)) {
+            System.arraycopy(status, 0, lastStatus, 0, status.length);
+            if (listener != null) listener.onVideoState(status[0], status[1], status[2], status[3]);
+        }
+    }
+
+    void disconnect(Context context) {
+        int mode = currentMode;
+        stop();
+        start(context, mode);
+    }
 
     boolean start(Context context, int mode) {
         if (mode < MODE_ALL || mode > MODE_OFF) return false;
@@ -90,9 +95,7 @@ final class AirPlayReceiver {
                     discovery.registerService(info, NsdManager.PROTOCOL_DNS_SD, registration);
                     registrations.add(registration);
                 }
-                Thread next = new Thread(this::run, "AirPlay-Playback");
-                worker = next;
-                next.start();
+                main.post(poll);
                 return true;
             }
         } catch (RuntimeException | LinkageError failure) {
@@ -103,13 +106,7 @@ final class AirPlayReceiver {
     }
 
     void stop() {
-        Thread previous = worker;
-        worker = null;
-        if (previous != null) previous.interrupt();
-        synchronized (playback) {
-            releaseDecoder();
-            releaseAudio();
-        }
+        main.removeCallbacks(poll);
         for (Registration registration : registrations) {
             try { discovery.unregisterService(registration); }
             catch (IllegalArgumentException removed) { /* Registration already ended. */ }
@@ -118,7 +115,8 @@ final class AirPlayReceiver {
         if (currentMode != MODE_OFF) NativeCore.airplayStop();
         currentMode = MODE_OFF;
         receiverName = null;
-        if (previous != null && listener != null) listener.onStateChanged(STATE_IDLE);
+        if (lastStatus[0] != IDLE && listener != null) listener.onVideoState(IDLE, 0, 0, 0);
+        java.util.Arrays.fill(lastStatus, 0);
     }
 
     private final class Registration implements NsdManager.RegistrationListener {
@@ -153,156 +151,8 @@ final class AirPlayReceiver {
         }
     }
 
-    void setSurface(Surface next) {
-        synchronized (playback) {
-            if (surface == next) return;
-            releaseDecoder();
-            if (surface != null) surface.release();
-            surface = next;
-            failedCodec = 0;
-        }
-    }
-
-    private void run() {
-        Thread self = Thread.currentThread();
-        int lastState = STATE_IDLE;
-        MediaCodec.BufferInfo info = new MediaCodec.BufferInfo();
-        while (worker == self) {
-            int state = getCurrentState();
-            if (state != lastState) {
-                lastState = state;
-                main.post(() -> {
-                    if (worker == self && listener != null) listener.onStateChanged(state);
-                });
-            }
-            boolean didWork;
-            synchronized (playback) {
-                if (worker != self) return;
-                if (state != STATE_MIRRORING) {
-                    releaseDecoder();
-                    failedCodec = 0;
-                }
-                if (state == STATE_IDLE) releaseAudio();
-                didWork = state == STATE_MIRRORING && playVideo(info, self);
-                didWork |= state != STATE_IDLE && playAudio();
-            }
-            if (!didWork) {
-                try { Thread.sleep(state == STATE_IDLE ? 40 : 5); }
-                catch (InterruptedException stopped) { return; }
-            }
-        }
-    }
-
-    private boolean playVideo(MediaCodec.BufferInfo info, Thread owner) {
-        int format = NativeCore.airplayVideoFormat();
-        if (format == 0 || format == failedCodec || surface == null || !surface.isValid()) return false;
-        try {
-            if (decoder == null || codec != format) {
-                releaseDecoder();
-                String mime = format == 2 ? MediaFormat.MIMETYPE_VIDEO_HEVC : MediaFormat.MIMETYPE_VIDEO_AVC;
-                MediaFormat config = MediaFormat.createVideoFormat(mime, 1920, 1080);
-                config.setInteger(MediaFormat.KEY_MAX_INPUT_SIZE, 4 * 1024 * 1024);
-                decoder = MediaCodec.createDecoderByType(mime);
-                decoder.configure(config, surface, null, 0);
-                decoder.start();
-                codec = format;
-            }
-
-            // Keep a dequeued input slot until a frame is available.
-            if (videoInput < 0) videoInput = decoder.dequeueInputBuffer(0);
-            boolean didWork = false;
-            if (videoInput >= 0) {
-                byte[] frame = NativeCore.airplayPollVideo();
-                if (frame != null) {
-                    ByteBuffer input = decoder.getInputBuffer(videoInput);
-                    if (input != null && frame.length <= input.capacity()) {
-                        input.clear();
-                        input.put(frame);
-                        decoder.queueInputBuffer(videoInput, 0, frame.length, System.nanoTime() / 1000, 0);
-                    } else {
-                        decoder.queueInputBuffer(videoInput, 0, 0, 0, 0);
-                        NativeCore.airplayResetVideo();
-                    }
-                    videoInput = -1;
-                    didWork = true;
-                }
-            }
-
-            int output = decoder.dequeueOutputBuffer(info, 0);
-            if (output == MediaCodec.INFO_OUTPUT_FORMAT_CHANGED) {
-                MediaFormat size = decoder.getOutputFormat();
-                int width = size.getInteger(MediaFormat.KEY_WIDTH);
-                int height = size.getInteger(MediaFormat.KEY_HEIGHT);
-                if (size.containsKey("crop-right")) {
-                    width = size.getInteger("crop-right") - size.getInteger("crop-left") + 1;
-                    height = size.getInteger("crop-bottom") - size.getInteger("crop-top") + 1;
-                }
-                int w = width, h = height;
-                main.post(() -> {
-                    if (worker == owner && listener != null) listener.onVideoDimensionsChanged(w, h);
-                });
-            } else if (output >= 0) {
-                decoder.releaseOutputBuffer(output, true);
-                didWork = true;
-            }
-            return didWork;
-        } catch (java.io.IOException | RuntimeException failure) {
-            Log.w(TAG, "Could not decode AirPlay video", failure);
-            releaseDecoder();
-            failedCodec = format;
-            return false;
-        }
-    }
-
-    private int videoInput = -1;
-    private byte[] pendingAudio;
-    private int audioOffset;
-
-    private boolean playAudio() {
-        if (pendingAudio == null) {
-            pendingAudio = NativeCore.airplayPollAudio();
-            audioOffset = 0;
-        }
-        if (pendingAudio == null) return false;
-        try {
-            if (audio == null) {
-                int channels = AudioFormat.CHANNEL_OUT_STEREO;
-                int encoding = AudioFormat.ENCODING_PCM_16BIT;
-                int size = AudioTrack.getMinBufferSize(44100, channels, encoding);
-                audio = new AudioTrack(AudioManager.STREAM_MUSIC, 44100, channels, encoding,
-                        Math.max(size, 8192), AudioTrack.MODE_STREAM);
-                audio.play();
-            }
-            int written = audio.write(pendingAudio, audioOffset, pendingAudio.length - audioOffset,
-                    AudioTrack.WRITE_NON_BLOCKING);
-            if (written < 0) {
-                releaseAudio();
-                return false;
-            }
-            audioOffset += written;
-            if (audioOffset == pendingAudio.length) pendingAudio = null;
-            return written > 0;
-        } catch (RuntimeException failure) {
-            Log.w(TAG, "Could not play AirPlay audio", failure);
-            releaseAudio();
-            return false;
-        }
-    }
-
-    private void releaseDecoder() {
-        videoInput = -1;
-        if (decoder != null) {
-            decoder.release();
-            decoder = null;
-        }
-    }
-
-    private void releaseAudio() {
-        pendingAudio = null;
-        if (audio != null) {
-            audio.release();
-            audio = null;
-        }
+    void setSurface(Surface surface) {
+        NativeCore.airplaySetSurface(surface);
     }
 
     private static byte[] deviceId(Context context) {

@@ -19,3 +19,6 @@ __pycache__/
 *.pem
 .codex/
 .agents/
+
+# Public legacy AirTunes protocol key included verbatim in shairplay 0.13.0.
+!/rust/third_party/shairplay/airport.key

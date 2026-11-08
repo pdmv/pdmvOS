@@ -735,6 +735,7 @@ version = "4.0.0"
 dependencies = [
  "shairplay",
  "tokio",
+ "tracing",
 ]
 
 [[package]]
@@ -1050,8 +1051,6 @@ dependencies = [
 [[package]]
 name = "shairplay"
 version = "0.13.0"
-source = "registry+https://github.com/rust-lang/crates.io-index"
-checksum = "074c91db1c315a030271917555afa5546380abee70e2b36b382b7cc70da9971b"
 dependencies = [
  "aes",
  "astro-dnssd",

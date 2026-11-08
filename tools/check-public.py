@@ -1,6 +1,7 @@
 #!/usr/bin/env python3
 """Check tracked publication files and local Markdown links."""
 from pathlib import Path
+import hashlib
 import re
 import subprocess
 import sys
@@ -13,6 +14,11 @@ if not files:
     raise SystemExit('Track publication files before running this check')
 for name in files:
     path = Path(name)
+    if name == 'rust/third_party/shairplay/airport.key':
+        # This exact key is part of the public upstream AirTunes implementation.
+        if hashlib.sha256((ROOT / path).read_bytes()).hexdigest() != '1a04883a6086368301382c6bae4074296929da9000b399dc616848f622293363':
+            raise SystemExit('Unexpected upstream AirTunes key contents')
+        continue
     if path.parts[0] in {'.local', 'dist', '.gradle', '.codex', '.agents'} or path.suffix.lower() in {'.p12', '.keystore', '.jks', '.key', '.pem', '.apk'}:
         raise SystemExit('Private or generated file tracked: ' + name)
     if '__pycache__' in path.parts or name.startswith('app/build/'):

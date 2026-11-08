@@ -99,9 +99,6 @@ final class NativeCore {
     // AirPlay Receiver native bindings
     static native byte[] airplayStart(int mode, byte[] serverName, byte[] deviceId);
     static native void airplayStop();
-    static native int airplayGetState();
-    static native int airplayVideoFormat();
-    static native void airplayResetVideo();
-    static native byte[] airplayPollVideo();
-    static native byte[] airplayPollAudio();
+    static native void airplayStatus(int[] result);
+    static native void airplaySetSurface(Object surface);
 }

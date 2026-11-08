@@ -30,6 +30,8 @@ Nguồn [Gradle 8.9](https://github.com/gradle/gradle/tree/v8.9.0).
 
 ## Bộ thu AirPlay
 
-Phần giao thức AirPlay liên kết tĩnh với `shairplay` 0.13.0, do tác giả thư viện công bố theo LGPL-3.0-or-later. Toàn văn GPL-3.0 và LGPL-3.0 đi kèm trong `app/src/main/assets/licenses/`. Tệp `pdmvOS-VERSION-source.tar.gz` trên trang phát hành chứa mã nguồn đúng bản dựng, các phụ thuộc Rust và hướng dẫn dựng lại với thư viện đã sửa đổi.
+Phần giao thức AirPlay liên kết tĩnh với bản `shairplay` 0.13.0 đã chỉnh sửa tại `rust/third_party/shairplay/`, do tác giả thư viện công bố theo LGPL-3.0-or-later. Toàn văn GPL-3.0 và LGPL-3.0 đi kèm trong `app/src/main/assets/licenses/`. Tệp `pdmvOS-VERSION-source.tar.gz` trên trang phát hành chứa mã nguồn đúng bản dựng, các phụ thuộc Rust và hướng dẫn dựng lại với thư viện đã sửa đổi.
 
 [Mã nguồn và giấy phép](https://docs.rs/crate/shairplay/0.13.0/source/LICENSE) · [Ghi chú nguồn gốc FairPlay](https://github.com/metaneutrons/shairplay-rust/blob/main/docs/fairplay-provenance.md)
+
+Âm thanh AAC‑ELD dùng bộ giải mã AAC từ FFmpeg 7.1.5, dựng với các thành phần LGPL. Gói mã nguồn phát hành kèm mã nguồn FFmpeg đúng phiên bản và cấu hình dựng. [Mã nguồn FFmpeg](https://ffmpeg.org/releases/ffmpeg-7.1.5.tar.xz)

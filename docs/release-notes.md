@@ -1,7 +1,9 @@
-## pdmvOS 4.0.1
+## pdmvOS 4.0.2
 
-- **AirPlay trên Android TV.** Nhấn giữ **AirPlay** trong menu **Đầu vào** để chọn **Màn hình và âm thanh**, **Chỉ màn hình**, **Chỉ âm thanh** hoặc **Tắt**. Chọn tên pdmvOS trên thiết bị gửi cùng mạng nội bộ.
-- **Menu dễ đọc hơn.** Nhãn chế độ ngắn gọn, dấu chọn có khoảng riêng và co giãn cùng chữ. Thông báo AirPlay dùng dấu `·`.
-- **Kiểm thử.** Máy Mac tìm thấy Sony BRAVIA qua Bonjour. TV hiển thị luồng H.264 mã hóa và phát âm thanh thử nghiệm. Khả năng truyền trực tiếp từ iPhone và iPad chưa được xác minh trong đợt kiểm thử này.
+- **Chiếu khi đang mở ứng dụng.** Trên Android 9, AirPlay tự đưa màn hình chiếu lên trước. Nếu ứng dụng được mở từ pdmvOS, khung chiếu đợi ứng dụng thu về ô launcher rồi trượt xuống cùng thông báo.
+- **Giữ trọn hình.** Khung chiếu co về tâm khi thông báo **Nhấn Back để dừng** xuất hiện. Bốn góc bo theo ô ứng dụng, rồi vuông dần khi khung mở rộng. Phần dư do lệch tỷ lệ chuyển sang nền đen.
+- **Phát ổn định hơn.** Bộ nhận Rust tự điều chỉnh đệm theo nhịp mạng, giải mã tiếng AAC-ELD và phát hình qua lớp video riêng của Android.
+- **Chọn chế độ AirPlay bằng một lần nhấn.** Mở **Đầu vào**, rồi nhấn **AirPlay**. Khung chuyển đổi theo chiều cao của từng menu. Nhấn **Back** để về danh sách Đầu vào, với vùng chọn đặt lại ở AirPlay.
+- **Chuyển focus trong menu.** Chữ và dấu chọn giữ nguyên kích thước. Nền vùng chọn trượt giữa các dòng và lún nhẹ hơn khi nhấn.
 
-Nhấn giữ **Cài đặt** trong launcher để cập nhật từ pdmvOS 3.1.5 trở lên. APK đã ký, bộ cài và bộ mã nguồn dựng lại có trong tệp đính kèm. Xem [hướng dẫn cài đặt](https://github.com/pdmv/pdmvOS/blob/v4.0.1/docs/installation.md) và [ghi nguồn thư viện](https://github.com/pdmv/pdmvOS/blob/v4.0.1/NOTICE.md).
+Có thể cập nhật từ pdmvOS 3.1.5 trở lên bằng cách nhấn giữ **Cài đặt** trong launcher. Xem [hướng dẫn cài đặt](https://github.com/pdmv/pdmvOS/blob/v4.0.2/docs/installation.md).

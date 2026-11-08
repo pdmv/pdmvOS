@@ -49,17 +49,9 @@ CI dựng debug và chạy bộ kiểm tra trên pull request và nhánh main. K
 
 ## Dựng lại với thư viện AirPlay đã chỉnh sửa
 
-Giải nén bộ mã nguồn của bản phát hành. Thư mục `vendor/shairplay/` chứa đúng phiên bản thư viện dùng trong APK, cùng giấy phép và ghi chú nguồn gốc FairPlay. Để sửa thư viện, sao chép nó ra ngoài thư mục phụ thuộc đã khóa và thêm bản sao làm nguồn ưu tiên:
+Giải nén bộ mã nguồn của bản phát hành. Thư mục `rust/third_party/shairplay/` chứa đúng mã nguồn thư viện dùng trong APK, cùng giấy phép và ghi chú nguồn gốc FairPlay. Sau khi sửa mã thư viện trong thư mục này, chạy:
 
 ```sh
-cp -R vendor/shairplay shairplay-local
-cat >> rust/Cargo.toml <<'TOML'
-
-[patch.crates-io]
-shairplay = { path = "../shairplay-local" }
-TOML
-# Sửa mã trong shairplay-local/, rồi cập nhật khóa phụ thuộc.
-cargo update --offline --manifest-path rust/Cargo.toml -p shairplay
 ./gradlew :app:assembleDebug
 ```
 

@@ -27,6 +27,8 @@ export CARGO_TARGET_X86_64_LINUX_ANDROID_LINKER="$TOOLCHAIN_BIN/x86_64-linux-and
 export CARGO_TARGET_AARCH64_LINUX_ANDROID_RUSTFLAGS="-C link-arg=-Wl,-z,max-page-size=16384"
 export CARGO_TARGET_X86_64_LINUX_ANDROID_RUSTFLAGS="-C link-arg=-Wl,-z,max-page-size=16384"
 
+./tools/build-airplay-aac.sh "$TOOLCHAIN_BIN"
+
 cargo build --locked --manifest-path rust/Cargo.toml --release \
   --target aarch64-linux-android \
   --target armv7-linux-androideabi \

@@ -1289,18 +1289,20 @@ pub extern "system" fn Java_dev_pdmv_os_NativeCore_airplayStop(_env: JNIEnv, _cl
 }
 
 #[no_mangle]
-pub extern "system" fn Java_dev_pdmv_os_NativeCore_airplayGetState(_env: JNIEnv, _class: jclass) -> jint {
-    crate::airplay::global_get_state()
+pub unsafe extern "system" fn Java_dev_pdmv_os_NativeCore_airplayStatus(
+    env: JNIEnv, _class: jclass, result: jintArray,
+) {
+    let status = crate::airplay::global_status();
+    let write: FnSetIntArrayRegion = vtable_fn(env, IDX_SET_INT_ARRAY_REGION);
+    write(env, result, 0, status.len() as jsize, status.as_ptr());
 }
 
+#[cfg(target_os = "android")]
 #[no_mangle]
-pub extern "system" fn Java_dev_pdmv_os_NativeCore_airplayVideoFormat(_env: JNIEnv, _class: jclass) -> jint {
-    crate::airplay::global_video_format()
-}
-
-#[no_mangle]
-pub extern "system" fn Java_dev_pdmv_os_NativeCore_airplayResetVideo(_env: JNIEnv, _class: jclass) {
-    crate::airplay::global_reset_video();
+pub unsafe extern "system" fn Java_dev_pdmv_os_NativeCore_airplaySetSurface(
+    env: JNIEnv, _class: jclass, surface: jobject,
+) {
+    crate::airplay::set_surface(env, surface);
 }
 
 unsafe fn airplay_bytes(env: JNIEnv, bytes: Option<Vec<u8>>) -> jbyteArray {
@@ -1312,20 +1314,4 @@ unsafe fn airplay_bytes(env: JNIEnv, bytes: Option<Vec<u8>>) -> jbyteArray {
         set_region(env, arr, 0, bytes.len() as jsize, bytes.as_ptr().cast());
     }
     arr
-}
-
-#[no_mangle]
-pub unsafe extern "system" fn Java_dev_pdmv_os_NativeCore_airplayPollVideo(
-    env: JNIEnv,
-    _class: jclass,
-) -> jbyteArray {
-    airplay_bytes(env, crate::airplay::global_poll_video())
-}
-
-#[no_mangle]
-pub unsafe extern "system" fn Java_dev_pdmv_os_NativeCore_airplayPollAudio(
-    env: JNIEnv,
-    _class: jclass,
-) -> jbyteArray {
-    airplay_bytes(env, crate::airplay::global_poll_audio(4096))
 }
