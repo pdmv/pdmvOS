@@ -31,7 +31,7 @@ jobs:
         with:
           packages: 'platform-tools platforms;android-35 build-tools;34.0.0'
       - name: Download release assets
-        run: gh release download "$RELEASE_TAG" --repo "$GITHUB_REPOSITORY" --dir dist --pattern '*.apk' --pattern '*.sha256' --pattern '*.release.json' --pattern '*operating-kit.zip'
+        run: gh release download "$RELEASE_TAG" --repo "$GITHUB_REPOSITORY" --dir dist --pattern '*.apk' --pattern '*.sha256' --pattern '*.release.json' --pattern '*operating-kit.zip' --pattern '*-source.tar.gz'
       - name: Verify checksums and pinned APK identity
         run: |
           (cd dist && sha256sum -c *.sha256)

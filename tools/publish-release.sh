@@ -10,6 +10,7 @@ if draft=$(gh release view "$tag" --json isDraft --jq '.isDraft' 2>/dev/null); t
 fi
 ./tools/build-release.sh
 ./tools/package-release-kit.sh
+./tools/package-release-source.sh
 if git rev-parse "$tag" >/dev/null 2>&1; then
   [[ "$(git rev-list -n 1 "$tag")" == "$(git rev-parse HEAD)" ]] || { echo 'Tag đang trỏ tới commit khác.' >&2; exit 1; }
 else
@@ -25,6 +26,8 @@ gh release upload "$tag" \
   "dist/pdmvOS-$version.apk.sha256" \
   "dist/pdmvOS-$version.release.json" \
   "dist/pdmvOS-$version-operating-kit.zip" \
-  "dist/pdmvOS-$version-operating-kit.zip.sha256" --clobber
+  "dist/pdmvOS-$version-operating-kit.zip.sha256" \
+  "dist/pdmvOS-$version-source.tar.gz" \
+  "dist/pdmvOS-$version-source.tar.gz.sha256" --clobber
 gh release edit "$tag" --draft=false --latest
 gh release view "$tag" --json url --jq '.url'

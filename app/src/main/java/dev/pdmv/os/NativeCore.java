@@ -95,4 +95,13 @@ final class NativeCore {
     static native int returnGateConsume(int bits);
 
     static native int slotLayoutOp(int op, int arg1, int arg2, int[] dock6, int[] gridBuf, int gridLen);
+
+    // AirPlay Receiver native bindings
+    static native byte[] airplayStart(int mode, byte[] serverName, byte[] deviceId);
+    static native void airplayStop();
+    static native int airplayGetState();
+    static native int airplayVideoFormat();
+    static native void airplayResetVideo();
+    static native byte[] airplayPollVideo();
+    static native byte[] airplayPollAudio();
 }

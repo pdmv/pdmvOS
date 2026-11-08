@@ -1,5 +1,11 @@
 # Changelog
 
+## 4.0.1
+
+- Thêm bộ thu AirPlay bằng Rust cho phản chiếu màn hình và phát âm thanh. TV xuất hiện với tên pdmvOS trên cùng mạng nội bộ.
+- Rút gọn tên các chế độ, chừa khoảng riêng cho dấu chọn và đồng bộ chuyển động với chữ khi đổi tiêu điểm.
+- Dùng dấu chấm giữa trong thông báo AirPlay.
+
 ## 4.0.0
 
 - Chuyển toàn bộ nhân tính toán vật lý lò xo, động học chuyển tiếp, hình học bố cục, xử lý ảnh/blur và chính sách miền sang nhân Rust gốc (`pdmvos-core`) qua cầu nối JNI không phụ thuộc ngoài (`NativeCore`), giữ lớp Android/HWUI gọn nhẹ.

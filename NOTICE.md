@@ -27,3 +27,9 @@ Biểu tượng ứng dụng được lấy từ các gói đã cài trên thi�
 Gradle Wrapper 8.9 được cung cấp bởi dự án Gradle, theo Apache License 2.0. Mã wrapper và bản giấy phép nằm trong `gradle/wrapper/`.
 
 Nguồn [Gradle 8.9](https://github.com/gradle/gradle/tree/v8.9.0).
+
+## Bộ thu AirPlay
+
+Phần giao thức AirPlay liên kết tĩnh với `shairplay` 0.13.0, do tác giả thư viện công bố theo LGPL-3.0-or-later. Toàn văn GPL-3.0 và LGPL-3.0 đi kèm trong `app/src/main/assets/licenses/`. Tệp `pdmvOS-VERSION-source.tar.gz` trên trang phát hành chứa mã nguồn đúng bản dựng, các phụ thuộc Rust và hướng dẫn dựng lại với thư viện đã sửa đổi.
+
+[Mã nguồn và giấy phép](https://docs.rs/crate/shairplay/0.13.0/source/LICENSE) · [Ghi chú nguồn gốc FairPlay](https://github.com/metaneutrons/shairplay-rust/blob/main/docs/fairplay-provenance.md)
