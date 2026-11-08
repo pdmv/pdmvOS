@@ -47,7 +47,7 @@ Hỗ trợ **Android 8 trở lên (API 26)** và remote D-pad. Đã thử thực
 
 ## Phát triển
 
-Dự án dùng Java và Android Canvas/HWUI. Xem [hướng dẫn phát triển](docs/development.md), [quy trình release](docs/releasing.md), [đóng góp](CONTRIBUTING.md) và [báo lỗi bảo mật](SECURITY.md).
+Dự án kết hợp nhân tính toán gốc bằng **Rust** (`pdmvos-core`) và tầng giao tiếp hệ điều hành/kết xuất phần cứng **Java + Android Canvas/HWUI**. Xem [hướng dẫn phát triển](docs/development.md), [quy trình release](docs/releasing.md), [đóng góp](CONTRIBUTING.md) và [báo lỗi bảo mật](SECURITY.md).
 
 ## Giấy phép
 

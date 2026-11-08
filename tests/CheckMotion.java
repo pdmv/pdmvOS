@@ -66,6 +66,13 @@ public final class CheckMotion {
         require(MotionProfile.reorderTilt(0,0,true)==0f,"idle tile must not lean");
         require(MotionProfile.reorderTilt(1500,0,true)<0f && MotionProfile.reorderTilt(-1500,0,true)>0f,"lean must oppose velocity");
         require(Math.abs(MotionProfile.reorderTilt(100000,100000,true))<=3.45f,"unbounded travel lean");
+        float[] clock0=new float[7],clockMid=new float[7],clock1=new float[7];
+        MotionProfile.clockCharTransition(0f,0,2,20f,clock0);
+        MotionProfile.clockCharTransition(.45f,0,2,20f,clockMid);
+        MotionProfile.clockCharTransition(1f,1,2,20f,clock1);
+        require(Math.abs(clock0[1])<.001f&&Math.abs(clock0[2]-1f)<.001f&&Math.abs(clock0[3]-1f)<.001f&&Math.abs(clock0[6])<.001f,"clock start state mismatch");
+        require(clockMid[1]<0f&&clockMid[4]>0f&&clockMid[3]<1f&&clockMid[6]>0f,"clock mid roll mismatch");
+        require(Math.abs(clock1[3])<.001f&&Math.abs(clock1[4])<.001f&&Math.abs(clock1[5]-1f)<.001f&&Math.abs(clock1[6]-1f)<.001f,"clock end state mismatch");
         System.out.println("PASS: contextual in/out springs are stable, reversible and 30/60Hz tolerant");
     }
 }

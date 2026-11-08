@@ -29,7 +29,15 @@ android {
     compileOptions { sourceCompatibility JavaVersion.VERSION_17; targetCompatibility JavaVersion.VERSION_17 }
 }
 
+tasks.register('buildRust', Exec) {
+    workingDir rootProject.projectDir
+    commandLine './tools/build-rust.sh'
+}
+
 tasks.configureEach {
+    if (name == 'preBuild') {
+        dependsOn 'buildRust'
+    }
     if (name == 'validateSigningRelease') {
         doFirst {
             if (!releaseKey.exists() || !releasePassword.exists()) {

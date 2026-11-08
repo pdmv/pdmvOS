@@ -14,13 +14,15 @@ public final class FocusDepth {
     /** Kick light opposite the incoming navigation direction, then let it settle. */
     public void navigate(int dx,int dy){
         if(dx!=0){
-            horizontal.value=clamp(horizontal.value-dx*.13f,-.3f,.3f);
-            horizontal.velocity=clamp(horizontal.velocity-dx*.75f,-2.4f,2.4f);
+            long packed=NativeCore.focusDepthKickX(horizontal.value,horizontal.velocity,dx);
+            horizontal.value=Float.intBitsToFloat((int)(packed>>>32));
+            horizontal.velocity=Float.intBitsToFloat((int)packed);
             horizontal.aim(0f);
         }
         if(dy!=0){
-            vertical.value=clamp(vertical.value-dy*.12f,-.3f,.3f);
-            vertical.velocity=clamp(vertical.velocity-dy*.7f,-2.4f,2.4f);
+            long packed=NativeCore.focusDepthKickY(vertical.value,vertical.velocity,dy);
+            vertical.value=Float.intBitsToFloat((int)(packed>>>32));
+            vertical.velocity=Float.intBitsToFloat((int)packed);
             vertical.aim(0f);
         }
     }
@@ -32,5 +34,4 @@ public final class FocusDepth {
     public float x(){return horizontal.value;}
     public float y(){return vertical.value;}
     public boolean active(){return horizontal.busy()||vertical.busy();}
-    private static float clamp(float n,float low,float high){return Math.max(low,Math.min(high,n));}
 }

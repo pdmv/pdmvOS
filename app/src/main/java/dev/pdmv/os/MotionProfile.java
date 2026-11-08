@@ -11,20 +11,36 @@ package dev.pdmv.os;
 public final class MotionProfile {
     private MotionProfile(){}
     public static float arrangeAngle(double seconds,int identity,boolean selected){
-        double phase=(identity&1023)*.013;
-        return (selected?.8f:.65f)*(float)Math.sin(seconds*21.36+phase);
+        return NativeCore.motionArrangeAngle(seconds,identity,selected);
     }
     /** Inertial lean opposes actual travel speed, not the requested DPAD direction. */
     public static float reorderTilt(float vx,float vy,boolean selected){
-        if(vx==0f&&vy==0f)return 0f;
-        return -(selected?3f:1.6f)*(float)Math.tanh(vx/1700f)
-            +.45f*(float)Math.tanh(vy/1300f);
+        return NativeCore.motionReorderTilt(vx,vy,selected);
     }
     /** Smooth bounded strain from kinetic energy; zero speed means no deformation. */
     public static float strain(float velocity,float referenceSpeed,float maximum){
-        if(velocity==0f)return 0f;
-        float ratio=velocity/referenceSpeed;
-        return maximum*(float)Math.tanh(ratio*ratio);
+        return NativeCore.motionStrain(velocity,referenceSpeed,maximum);
+    }
+    public static float stepExponential(float value,float target,float dt,float tau,float epsilon){
+        return NativeCore.motionStepExponential(value,target,dt,tau,epsilon);
+    }
+    public static void clockCharTransition(float progress,int slot,int totalSlots,float travelY,float[] out7){
+        NativeCore.motionClockCharTransition(progress,slot,totalSlots,travelY,out7);
+    }
+    public static void resolveTileTransform(
+            float x,float y,float scaleVal,float pushed,float presenceVal,
+            boolean retired,boolean exiting,boolean selected,boolean traveling,
+            boolean dock,boolean edgeStretched,
+            float canvasLeft,float canvasTop,float canvasScale,
+            float edgeX,float edgeY,float edgeAnchorX,float edgeAnchorY,
+            float vx,float vy,float scrollStrain,
+            float offsetX,float offsetY,float drawerVal,boolean hiddenForMorph,
+            float[] out8){
+        NativeCore.motionResolveTileTransform(
+                x,y,scaleVal,pushed,presenceVal,retired,exiting,selected,traveling,
+                dock,edgeStretched,canvasLeft,canvasTop,canvasScale,
+                edgeX,edgeY,edgeAnchorX,edgeAnchorY,vx,vy,scrollStrain,
+                offsetX,offsetY,drawerVal,hiddenForMorph,out8);
     }
 
     // Focus: prompt response with a restrained elastic settle.

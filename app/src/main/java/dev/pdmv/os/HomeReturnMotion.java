@@ -14,16 +14,13 @@ public final class HomeReturnMotion {
     public static final float DEST_X=960f, DEST_Y=540f;
 
     public static float position(float source, float destination, float p) {
-        float t=clamp(p);
-        return source+(destination-source)*t;
+        return NativeCore.homeReturnPosition(source, destination, p);
     }
     public static float scale(float p) {
-        return 1f+(MAX_SCALE-1f)*clamp(p);
+        return NativeCore.homeReturnScale(p);
     }
     public static float backdropOpacity(float p) {
-        float t=clamp(p);
         // Stronger early separation, with no secondary easing of position/scale.
-        return t*(1.15f-.15f*t);
+        return NativeCore.homeReturnBackdropOpacity(p);
     }
-    private static float clamp(float p) {return Math.max(0f,Math.min(1f,p));}
 }

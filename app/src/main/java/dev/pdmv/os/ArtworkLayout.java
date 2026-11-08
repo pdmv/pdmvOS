@@ -12,16 +12,13 @@ public final class ArtworkLayout {
         public float height(){return bottom-top;}
     }
     public static Bounds fit(int sourceWidth,int sourceHeight,float boxWidth,float boxHeight,boolean banner){
-        if(sourceWidth<=0)sourceWidth=128;
-        if(sourceHeight<=0)sourceHeight=128;
-        if(boxWidth<=0||boxHeight<=0)throw new IllegalArgumentException("invalid canvas size");
         // Banner includes its full logo and border (CENTER_INSIDE, never CENTER_CROP).
         // Square Android launcher icons are isolated and centered in a consistent area.
-        float maxWidth=banner?boxWidth:boxHeight*.82f;
-        float maxHeight=banner?boxHeight:boxHeight*.82f;
-        float scale=Math.min(maxWidth/sourceWidth,maxHeight/sourceHeight);
-        float w=sourceWidth*scale,h=sourceHeight*scale;
-        float left=(boxWidth-w)*.5f,top=(boxHeight-h)*.5f;
-        return new Bounds(left,top,left+w,top+h);
+        float[] out=new float[4];
+        NativeCore.artworkLayoutFit(sourceWidth,sourceHeight,boxWidth,boxHeight,banner,out);
+        return new Bounds(out[0],out[1],out[2],out[3]);
+    }
+    public static void centerCropRect(int srcW,int srcH,float dstW,float dstH,int[] out4){
+        NativeCore.artworkCenterCropRect(srcW,srcH,dstW,dstH,out4);
     }
 }

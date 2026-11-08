@@ -1151,15 +1151,16 @@ public final class TvAcceptance extends Instrumentation {
         try{
             long down=SystemClock.uptimeMillis();injectKey(new KeyEvent(down,down,KeyEvent.ACTION_DOWN,23,0));SystemClock.sleep(550);injectKey(new KeyEvent(down,SystemClock.uptimeMillis(),KeyEvent.ACTION_UP,23,0));waitMotion();
             check(state("menu")==null&&settings.getHits()==0,"Settings hold must not open menu or settings");
-            String wanted=getTargetContext().getPackageManager().getPackageInfo("dev.pdmv.os",0).versionName;
-            check(((String)state("toastMessage")).contains(wanted),"Settings hold must show installed version");
+            check((Boolean)state("updateDialog")&&state("dialogAction")!=null
+                &&"Cập nhật pdmvOS".equals(state("dialogTitle")),"Settings hold must open the update dialog");
+            key(4);waitMotion();
             key(23);check(settings.getHits()==1,"Short Settings press must still open Android settings");
         }finally{removeMonitor(settings);}
         key(4);key(20);waitMotion();
         main(()->{set(view(),"moveMode",true);Method m=activity.getClass().getDeclaredMethod("onNewIntent",Intent.class);m.setAccessible(true);m.invoke(activity,new Intent(Intent.ACTION_MAIN).addCategory(Intent.CATEGORY_HOME));return null;});waitMotion();
         check((Integer)state("page")==0&&!(Boolean)state("moveMode")&&state("menu")==null,"System Home must return to the launcher root");
         report.put("system_home_returns_to_root","PASS");
-        key(4);report.put("dock_down_follows_visible_column","PASS").put("home_down_selects_first","PASS").put("settings_hold_version_toast","PASS").put("settings_short_press","PASS");
+        key(4);report.put("dock_down_follows_visible_column","PASS").put("home_down_selects_first","PASS").put("settings_hold_update_dialog","PASS").put("settings_short_press","PASS");
     }
     private void brightReadability(JSONObject report)throws Exception{
         Object store=main(()->field(activity,"wallpapers"));

@@ -15,6 +15,13 @@ public final class CheckArtworkTransform {
             near(sourceRadius*sx,corner,"consistent squircle corner while focusing");
             if(Math.abs(sx-sy)>.003f)throw new AssertionError("tile artwork aspect ratio mismatch");
         }
+        int w=504,h=284,g=2,mw=w+2*g,mh=h+2*g;
+        int[] src=new int[w*h],dst=new int[mw*mh];
+        java.util.Arrays.fill(src,0xffffffff);
+        java.util.Arrays.fill(dst,0xffffffff);
+        ArtworkTransform.smoothCorners(src,dst,w,h,g,118f,3.05f);
+        if(dst[144*mw]!=0||dst[0]!=0)throw new AssertionError("gutter not transparent");
+        if(dst[144*mw+254]!=0xffffffff)throw new AssertionError("center not opaque");
         System.out.println("PASS: image/path common coordinates, stable radius across focus frames");
     }
 }
