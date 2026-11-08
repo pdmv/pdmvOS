@@ -106,6 +106,16 @@ fn new_raop_connection(
         #[cfg(feature = "ap2")]
         is_ap2: false,
         #[cfg(feature = "ap2")]
+        realtime_task: None,
+        #[cfg(feature = "ap2")]
+        rc_task: None,
+        #[cfg(feature = "ap2")]
+        event_task: None,
+        #[cfg(feature = "video")]
+        video_task: None,
+        #[cfg(feature = "video")]
+        timing_task: None,
+        #[cfg(feature = "ap2")]
         playout_cmd: None,
         #[cfg(feature = "ap2")]
         event_sender: None,
@@ -153,6 +163,7 @@ struct RaopConnectionHandler {
 
 impl Drop for RaopConnectionHandler {
     fn drop(&mut self) {
+        self.conn.stop_streams(None);
         self.conn
             .shared
             .handler

@@ -1,5 +1,10 @@
 # Changelog
 
+## 4.0.3
+
+- Giữ phiên phản chiếu AirPlay khi Safari trên iPad chuyển tập và thay luồng âm thanh.
+- Dừng đúng luồng AirPlay được yêu cầu và giải phóng các kết nối phụ khi phiên kết thúc hoặc mất kết nối điều khiển.
+
 ## 4.0.2
 
 - AirPlay tự hiện khi đang mở ứng dụng. Khung chiếu trượt xuống sau hiệu ứng thu ứng dụng và co giãn cùng thông báo, giữ trọn hình theo tỷ lệ gốc.

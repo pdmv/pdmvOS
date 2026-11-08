@@ -11,7 +11,7 @@ const NTP_UNIX_EPOCH_OFFSET_SECS: u64 = 0x83AA_7E80; // 2_208_988_800
 pub(crate) fn spawn_ntp_responder(
     tsock: tokio::net::UdpSocket,
     remote_timing: std::net::SocketAddr,
-) {
+) -> tokio::task::AbortHandle {
     tokio::spawn(async move {
         let mut buf = [0u8; 128];
 
@@ -79,5 +79,6 @@ pub(crate) fn spawn_ntp_responder(
                 }
             }
         }
-    });
+    })
+    .abort_handle()
 }

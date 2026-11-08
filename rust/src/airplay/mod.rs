@@ -368,7 +368,12 @@ fn install_diagnostics() {
                     if matches!(
                         field.name(),
                         "message"
+                            | "method"
+                            | "elapsed_ms"
+                            | "part"
+                            | "error_kind"
                             | "stream_type"
+                            | "stream_types"
                             | "audio_format"
                             | "sample_rate"
                             | "samples_per_frame"

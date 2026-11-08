@@ -8,7 +8,7 @@ use std::time::Duration;
 use bytes::BytesMut;
 use tokio::io::{AsyncReadExt, BufReader};
 use tokio::net::{TcpListener, TcpStream};
-use tracing::{debug, info, trace, warn};
+use tracing::{info, trace, warn};
 
 use crate::crypto::video_cipher::VideoCipher;
 use crate::raop::video::{PacketKind, VideoPacket, VideoSession};
@@ -53,12 +53,12 @@ async fn read_with_timeout(
 ) -> bool {
     match tokio::time::timeout(READ_TIMEOUT, stream.read_exact(buffer)).await {
         Ok(Ok(_)) => true,
-        Ok(Err(_)) => {
-            debug!(part, "Video stream ended during read");
+        Ok(Err(error)) => {
+            info!(part, error_kind = ?error.kind(), "Video stream ended during read");
             false
         }
         Err(_) => {
-            debug!(part, "Video stream read timed out");
+            info!(part, "Video stream read timed out");
             false
         }
     }

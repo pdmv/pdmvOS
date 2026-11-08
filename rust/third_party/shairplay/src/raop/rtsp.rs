@@ -361,20 +361,159 @@ fn handle_flush_inline(conn: &mut RaopConnection, request: &HttpRequest) {
     }
 }
 
-/// TEARDOWN: stop RTP, stop buffered audio, close connection.
+/// A stream list limits teardown to those streams. A request without one
+/// closes the session. Validate the whole list before changing any state.
+#[cfg(feature = "ap2")]
+fn teardown_streams(body: Option<&[u8]>) -> Result<Option<Vec<u64>>, ()> {
+    let Some(body) = body.filter(|body| !body.is_empty()) else {
+        return Ok(None);
+    };
+    let plist::Value::Dictionary(body) = plist::from_bytes(body).map_err(|_| ())? else {
+        return Err(());
+    };
+    body.get("streams")
+        .map(|streams| {
+            streams
+                .as_array()
+                .ok_or(())?
+                .iter()
+                .map(|stream| {
+                    stream
+                        .as_dictionary()
+                        .and_then(|stream| stream.get("type"))
+                        .and_then(plist::Value::as_unsigned_integer)
+                        .ok_or(())
+                })
+                .collect()
+        })
+        .transpose()
+}
+
+impl RaopConnection {
+    pub(crate) fn stop_streams(&mut self, streams: Option<&[u64]>) {
+        let includes = |kind| streams.is_none_or(|streams| streams.contains(&kind));
+        if includes(96)
+            && let Some(mut rtp) = self.raop_rtp.take()
+        {
+            rtp.stop();
+        }
+        #[cfg(feature = "ap2")]
+        {
+            if includes(96)
+                && let Some(task) = self.realtime_task.take()
+            {
+                task.abort();
+            }
+            if includes(103)
+                && let Some(cmd) = self.playout_cmd.take()
+            {
+                let _ = cmd.send(crate::raop::buffered_audio::PlayoutCommand::Stop);
+            }
+            if includes(130)
+                && let Some(task) = self.rc_task.take()
+            {
+                task.abort();
+            }
+            if streams.is_none() {
+                self.event_sender = None;
+                if let Some(task) = self.event_task.take() {
+                    task.abort();
+                }
+            }
+        }
+        #[cfg(feature = "video")]
+        {
+            if includes(110)
+                && let Some(task) = self.video_task.take()
+            {
+                task.abort();
+            }
+            if streams.is_none()
+                && let Some(task) = self.timing_task.take()
+            {
+                task.abort();
+            }
+        }
+    }
+}
+
 fn handle_teardown(
     conn: &mut RaopConnection,
     _request: &HttpRequest,
     response: &mut HttpResponse,
 ) -> Option<Vec<u8>> {
+    #[cfg(feature = "ap2")]
+    match teardown_streams(_request.data()) {
+        Ok(Some(streams)) => {
+            tracing::info!(stream_types = ?streams, "TEARDOWN streams");
+            conn.stop_streams(Some(&streams));
+            return None;
+        }
+        Ok(None) => {}
+        Err(()) => {
+            tracing::warn!("Invalid TEARDOWN stream list");
+            *response = new_response(400, "Bad Request", _request.header("CSeq").unwrap_or("0"));
+            return None;
+        }
+    }
     response.add_header("Connection", "close");
     response.set_disconnect(true);
-    if let Some(mut rtp) = conn.raop_rtp.take() {
-        rtp.stop();
-    }
-    #[cfg(feature = "ap2")]
-    if let Some(cmd) = &conn.playout_cmd {
-        let _ = cmd.send(crate::raop::buffered_audio::PlayoutCommand::Stop);
-    }
+    conn.stop_streams(None);
     None
+}
+
+#[cfg(all(test, feature = "ap2"))]
+mod tests {
+    use super::teardown_streams;
+
+    fn plist_body(streams: Option<plist::Value>) -> Vec<u8> {
+        let mut body = plist::Dictionary::new();
+        if let Some(streams) = streams {
+            body.insert("streams".into(), streams);
+        }
+        let mut data = Vec::new();
+        plist::to_writer_binary(&mut data, &body).unwrap();
+        data
+    }
+
+    fn stream_list(kinds: &[u64]) -> plist::Value {
+        plist::Value::Array(
+            kinds
+                .iter()
+                .map(|&kind| {
+                    let mut stream = plist::Dictionary::new();
+                    stream.insert("type".into(), plist::Value::Integer(kind.into()));
+                    plist::Value::Dictionary(stream)
+                })
+                .collect(),
+        )
+    }
+
+    #[test]
+    fn teardown_without_stream_list_ends_session() {
+        assert_eq!(teardown_streams(None), Ok(None));
+        assert_eq!(teardown_streams(Some(&[])), Ok(None));
+        assert_eq!(teardown_streams(Some(&plist_body(None))), Ok(None));
+    }
+
+    #[test]
+    fn teardown_with_stream_list_keeps_control_connection() {
+        for kinds in [&[96][..], &[103, 110], &[130], &[96, 96, 999], &[]] {
+            let body = plist_body(Some(stream_list(kinds)));
+            assert_eq!(teardown_streams(Some(&body)), Ok(Some(kinds.to_vec())));
+        }
+    }
+
+    #[test]
+    fn malformed_teardown_cannot_close_session_or_partially_stop_streams() {
+        let plist::Value::Array(mut streams) = stream_list(&[96]) else {
+            unreachable!();
+        };
+        streams.push(plist::Value::Dictionary(plist::Dictionary::new()));
+        let mixed = plist_body(Some(plist::Value::Array(streams)));
+        let wrong_type = plist_body(Some(plist::Value::Boolean(true)));
+        for body in [&mixed[..], &wrong_type, b"invalid plist"] {
+            assert_eq!(teardown_streams(Some(body)), Err(()));
+        }
+    }
 }

@@ -34,7 +34,7 @@ impl RaopConnection {
         event_channel_cipher: crate::crypto::chacha_transport::EncryptedChannel,
         rx: tokio::sync::mpsc::UnboundedReceiver<Vec<u8>>,
     ) {
-        tokio::spawn(async move {
+        let task = tokio::spawn(async move {
             if let Ok((stream, addr)) = event_listener.accept().await {
                 tracing::info!(%addr, "RC event channel client connected");
                 crate::raop::event_channel::EventChannel::handle_stream(
@@ -45,6 +45,9 @@ impl RaopConnection {
                 .await;
             }
         });
+        if let Some(previous) = self.event_task.replace(task.abort_handle()) {
+            previous.abort();
+        }
     }
 }
 
@@ -557,17 +560,7 @@ fn setup_initial(conn: &mut RaopConnection, dict: &plist::Dictionary) -> Option<
             }
 
             let sender = crate::raop::event_channel::EventSender::from_tx(tx);
-            tokio::spawn(async move {
-                if let Ok((stream, addr)) = event_listener.accept().await {
-                    tracing::info!(%addr, "Event channel client connected");
-                    crate::raop::event_channel::EventChannel::handle_stream(
-                        stream,
-                        event_channel_cipher,
-                        rx,
-                    )
-                    .await;
-                }
-            });
+            conn.spawn_event_channel(event_listener, event_channel_cipher, rx);
             sender
         };
         conn.event_sender = Some(event_sender);
@@ -598,7 +591,10 @@ fn setup_initial(conn: &mut RaopConnection, dict: &plist::Dictionary) -> Option<
                 let local_port = tsock.local_addr().ok()?.port();
                 let mut remote_timing = conn.remote_socket;
                 remote_timing.set_port(timing_rport);
-                crate::raop::ntp::spawn_ntp_responder(tsock, remote_timing);
+                let task = crate::raop::ntp::spawn_ntp_responder(tsock, remote_timing);
+                if let Some(previous) = conn.timing_task.replace(task) {
+                    previous.abort();
+                }
                 Some(local_port)
             })
             .unwrap_or(0);
@@ -683,6 +679,8 @@ fn setup_stream_realtime(
             handler,
             output_config,
         ));
+        conn.stop_streams(Some(&[96]));
+        conn.realtime_task = Some(handle.abort_handle());
         conn.shared
             .set_active_audio(Box::new(move || handle.abort()));
 
@@ -716,7 +714,7 @@ fn setup_stream_realtime(
                 remote_socket: conn.remote_socket,
             };
             let handler = conn.shared.handler.clone();
-            conn.raop_rtp = if ct == 8 || audio_format == 0x0100_0000 {
+            let rtp = if ct == 8 || audio_format == 0x0100_0000 {
                 let rate = u32::try_from(sr).ok()?;
                 let samples = u32::try_from(spf).ok()?;
                 let decoder = handler.aac_eld_decoder(rate, samples)?;
@@ -727,7 +725,7 @@ fn setup_stream_realtime(
             } else {
                 RaopRtp::new(handler, config)
             };
-            if let Some(rtp) = &mut conn.raop_rtp {
+            if let Some(mut rtp) = rtp {
                 let control_port = stream0
                     .get("controlPort")
                     .and_then(|v| v.as_unsigned_integer())
@@ -735,6 +733,10 @@ fn setup_stream_realtime(
                 let (cport, _tport, dport) = rtp.start(true, control_port, 0).ok()?;
                 stream_resp.insert("dataPort".into(), plist::Value::Integer(dport.into()));
                 stream_resp.insert("controlPort".into(), plist::Value::Integer(cport.into()));
+                conn.stop_streams(Some(&[96]));
+                conn.raop_rtp = Some(rtp);
+            } else {
+                return None;
             }
         }
         #[cfg(not(feature = "video"))]
@@ -795,6 +797,7 @@ fn setup_stream_buffered(
     };
 
     let proc = crate::raop::buffered_audio::BufferedAudioProcessor { listener };
+    conn.stop_streams(Some(&[103]));
     let cmd_tx = proc.start(shk_arr, output_config, handler);
     conn.playout_cmd = Some(cmd_tx.clone());
     conn.shared.set_active_audio(Box::new(move || {
@@ -825,12 +828,15 @@ fn setup_stream_rc(
         let data_port = data_listener.local_addr().ok()?.port();
         tracing::debug!(data_port, "RC data channel opened");
 
-        tokio::spawn(async move {
+        let task = tokio::spawn(async move {
             if let Ok((_, addr)) = data_listener.accept().await {
                 tracing::info!(%addr, "RC data channel client connected");
             }
         });
 
+        if let Some(previous) = conn.rc_task.replace(task.abort_handle()) {
+            previous.abort();
+        }
         stream_resp.insert("streamID".into(), plist::Value::Integer(1_i64.into()));
         stream_resp.insert("dataPort".into(), plist::Value::Integer(data_port.into()));
     } else {
@@ -909,7 +915,10 @@ fn setup_stream_video(
 
     if let Some(vh) = &conn.shared.video_handler {
         let session = vh.video_init();
-        tokio::spawn(crate::raop::video_stream::run(listener, cipher, session));
+        let task = tokio::spawn(crate::raop::video_stream::run(listener, cipher, session));
+        if let Some(previous) = conn.video_task.replace(task.abort_handle()) {
+            previous.abort();
+        }
     }
 
     stream_resp.insert("dataPort".into(), plist::Value::Integer(video_port.into()));

@@ -136,6 +136,7 @@ pub(crate) struct RaopRtp {
     state: Arc<Mutex<RtpState>>,
     /// Send `true` to shut down the receive task.
     shutdown_tx: Option<watch::Sender<bool>>,
+    timing_task: Option<tokio::task::AbortHandle>,
     /// iPhone's control port (0 = no retransmits).
     control_rport: u16,
     /// Local control port (bound by us).
@@ -197,6 +198,7 @@ impl RaopRtp {
             buffer: Arc::new(Mutex::new(buffer)),
             state: Arc::new(Mutex::new(RtpState { flush: NO_FLUSH })),
             shutdown_tx: None,
+            timing_task: None,
             control_rport: 0,
             control_lport: 0,
             timing_lport: 0,
@@ -239,7 +241,10 @@ impl RaopRtp {
             let remote_sockaddr = self.remote_socket;
             let mut timing_addr = remote_sockaddr;
             timing_addr.set_port(timing_rport);
-            super::ntp::spawn_ntp_responder(tsock, timing_addr);
+            let task = super::ntp::spawn_ntp_responder(tsock, timing_addr);
+            if let Some(previous) = self.timing_task.replace(task) {
+                previous.abort();
+            }
 
             let format = self.format;
             let mut session = self.handler.audio_init(AudioFormat {
@@ -429,6 +434,9 @@ impl RaopRtp {
 
     /// Stop the receive task and flush the buffer.
     pub(crate) fn stop(&mut self) {
+        if let Some(task) = self.timing_task.take() {
+            task.abort();
+        }
         if let Some(tx) = self.shutdown_tx.take() {
             let _ = tx.send(true);
         }

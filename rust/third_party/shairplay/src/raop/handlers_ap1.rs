@@ -40,6 +40,16 @@ pub(crate) struct RaopConnection {
     #[cfg(feature = "ap2")]
     pub(crate) is_ap2: bool,
     #[cfg(feature = "ap2")]
+    pub(crate) realtime_task: Option<tokio::task::AbortHandle>,
+    #[cfg(feature = "ap2")]
+    pub(crate) rc_task: Option<tokio::task::AbortHandle>,
+    #[cfg(feature = "ap2")]
+    pub(crate) event_task: Option<tokio::task::AbortHandle>,
+    #[cfg(feature = "video")]
+    pub(crate) video_task: Option<tokio::task::AbortHandle>,
+    #[cfg(feature = "video")]
+    pub(crate) timing_task: Option<tokio::task::AbortHandle>,
+    #[cfg(feature = "ap2")]
     pub(crate) playout_cmd:
         Option<tokio::sync::mpsc::UnboundedSender<crate::raop::buffered_audio::PlayoutCommand>>,
     #[cfg(feature = "ap2")]

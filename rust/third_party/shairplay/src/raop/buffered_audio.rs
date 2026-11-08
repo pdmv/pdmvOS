@@ -103,6 +103,22 @@ impl BufferedAudioProcessor {
             delivery_loop(state2, handler2, output_config2);
         });
 
+        // Receiver task
+        let state4 = state.clone();
+
+        let receiver = tokio::spawn(async move {
+            let (stream, addr) = match self.listener.accept().await {
+                Ok(s) => s,
+                Err(e) => {
+                    warn!("Buffered audio accept failed: {e}");
+                    handler.on_error(&ShairplayError::Network(NetworkError::Io(e)));
+                    return;
+                }
+            };
+            info!(%addr, "Buffered audio client connected");
+            receive_loop(stream, &shk, output_config, state4, &handler).await;
+        });
+
         // Command handler
         let state3 = state.clone();
         let mut cmd_rx = cmd_rx;
@@ -163,6 +179,7 @@ impl BufferedAudioProcessor {
                         debug!(flushed = keys.len(), "Flushed");
                     }
                     PlayoutCommand::Stop => {
+                        receiver.abort();
                         s.stopped = true;
                         s.buffer.clear();
                         cvar.notify_all();
@@ -170,22 +187,6 @@ impl BufferedAudioProcessor {
                     }
                 }
             }
-        });
-
-        // Receiver task
-        let state4 = state.clone();
-
-        tokio::spawn(async move {
-            let (stream, addr) = match self.listener.accept().await {
-                Ok(s) => s,
-                Err(e) => {
-                    warn!("Buffered audio accept failed: {e}");
-                    handler.on_error(&ShairplayError::Network(NetworkError::Io(e)));
-                    return;
-                }
-            };
-            info!(%addr, "Buffered audio client connected");
-            receive_loop(stream, &shk, output_config, state4, &handler).await;
         });
 
         cmd_tx
