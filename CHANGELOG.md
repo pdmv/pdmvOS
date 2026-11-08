@@ -1,5 +1,10 @@
 # Changelog
 
+## 4.0.4
+
+- Khử răng cưa ở góc bo của khung AirPlay trong lúc thu nhỏ và chuyển sang toàn màn hình.
+- Giữ video trên lớp giải mã riêng và tái sử dụng mặt nạ góc khi kích thước khung ổn định.
+
 ## 4.0.3
 
 - Giữ phiên phản chiếu AirPlay khi Safari trên iPad chuyển tập và thay luồng âm thanh.

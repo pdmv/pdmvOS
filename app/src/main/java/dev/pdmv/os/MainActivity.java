@@ -1641,18 +1641,24 @@ public final class MainActivity extends Activity {
         private float airPlayToastProgress(){return UiGeometry.clamp(toastReveal.value,0f,1f);}
         private final class AirPlaySurface extends SurfaceView {
             private final Path corners=new Path();
+            private final Paint opening=new Paint(Paint.ANTI_ALIAS_FLAG);
             private final float[] vertices=new float[266];
             private float frameWidth,frameHeight,cornerRadius;
             private int surfaceWidth,surfaceHeight;
             AirPlaySurface(){
                 super(MainActivity.this);
                 setWillNotDraw(false);
+                opening.setXfermode(new PorterDuffXfermode(PorterDuff.Mode.CLEAR));
             }
-            void updateCorners(float width,float height,float radius){
+            void updateFrame(float width,float height,float radius,float entrance){
                 int w=getWidth(),h=getHeight();
+                setTranslationY(-(h+height)*.5f*(1f-entrance));
                 if(width==frameWidth&&height==frameHeight&&radius==cornerRadius&&w==surfaceWidth&&h==surfaceHeight)return;
+                boolean rounded=radius>0f||cornerRadius>0f;
                 frameWidth=width;frameHeight=height;cornerRadius=radius;
                 surfaceWidth=w;surfaceHeight=h;
+                setScaleX(width/w);
+                setScaleY(height/h);
                 if(radius>0f){
                     UiGeometry.squircleVertices(0f,0f,width,height,radius,3.05f,vertices);
                     float sx=w/width,sy=h/height;
@@ -1661,15 +1667,16 @@ public final class MainActivity extends Activity {
                     for(int i=2;i<vertices.length;i+=2)corners.lineTo(vertices[i]*sx,vertices[i+1]*sy);
                     corners.close();
                 }
-                invalidate();
+                if(rounded)invalidate();
             }
             @Override public void draw(Canvas canvas){
-                // Shape the window's opening while video stays on its own surface.
-                if(cornerRadius<=0f){super.draw(canvas);return;}
-                int saved=canvas.save();
-                canvas.clipPath(corners);
-                super.draw(canvas);
-                canvas.restoreToCount(saved);
+                if(cornerRadius<=0f||!airPlayFrameVisible||!getHolder().getSurface().isValid()){
+                    super.draw(canvas);
+                    return;
+                }
+                // Clear the window with coverage at the edge. Video is composed
+                // below it directly from the decoder surface.
+                canvas.drawPath(corners,opening);
             }
         }
         private void updateAirPlayTransform(){
@@ -1686,11 +1693,7 @@ public final class MainActivity extends Activity {
             float scale=expanded+(compact-expanded)*compactProgress;
             float videoW=scale*airPlayWidth,videoH=scale*airPlayHeight;
             float radius=Math.min(UiGeometry.TILE_RADIUS*canvasScale,Math.min(videoW,videoH)*.5f);
-            airPlaySurface.updateCorners(videoW,videoH,radius*compactProgress);
-            // Scale the view on the render thread without invalidating its texture.
-            airPlaySurface.setScaleX(videoW/w);
-            airPlaySurface.setScaleY(videoH/h);
-            airPlaySurface.setTranslationY(-(h+videoH)*.5f*(1f-airPlayEntrance.value));
+            airPlaySurface.updateFrame(videoW,videoH,radius*compactProgress,airPlayEntrance.value);
         }
         private void clearToast(){
             handler.removeCallbacks(hideToast);
