@@ -1,0 +1,19 @@
+[package]
+name = "pdmvos-core"
+version = "4.0.0"
+edition = "2021"
+license = "MIT"
+description = "Native Rust physics, geometry, pixel processing, and policy core for pdmvOS"
+
+[lib]
+name = "pdmvos_core"
+crate-type = ["cdylib", "rlib"]
+
+[dependencies]
+
+[profile.release]
+opt-level = 3
+lto = true
+codegen-units = 1
+panic = "abort"
+strip = true

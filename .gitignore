@@ -2,6 +2,8 @@
 .gradle/
 .idea/
 app/build/
+app/src/main/jniLibs/
+rust/target/
 build/
 dist/
 local.properties

@@ -257,7 +257,19 @@ final class WallpaperStore {
         Cohort result=new Cohort(ready);Bitmap base=null;boolean success=false;
         try{
             check(request);base=resized(ready,480,270);
-            for(int i=0;i<3;i++){check(request);result.frost[i]=blur(base,new int[]{1,5,6}[i]);}
+            int w=480,h=270,len=w*h;
+            int[] sourcePixels=new int[len],work=new int[len],scratch=new int[len];
+            base.getPixels(sourcePixels,0,w,0,0,w,h);
+            int[] radii=new int[]{1,5,6};
+            for(int i=0;i<3;i++){
+                check(request);
+                System.arraycopy(sourcePixels,0,work,0,len);
+                PixelBlur.apply(work,scratch,w,h,radii[i]);
+                Bitmap out=Bitmap.createBitmap(w,h,Bitmap.Config.ARGB_8888);
+                out.setPixels(work,0,w,0,0,w,h);
+                out.setHasAlpha(false);
+                result.frost[i]=out;
+            }
             success=true;return result;
         }finally{if(base!=null)base.recycle();if(!success)result.recycle();}
     }
@@ -267,21 +279,48 @@ final class WallpaperStore {
         finally{if(!success)result.recycle();}
     }
     private Bitmap[] prepareTransitions(Bitmap ready,int request)throws IOException{
-        Bitmap[] frames=new Bitmap[16];Bitmap sharp=null,low=null,high=null;boolean success=false;
+        Bitmap[] frames=new Bitmap[16];Bitmap sharp=null;boolean success=false;
         try{
-            check(request);sharp=resized(ready,640,360);low=sharp;high=blur(sharp,1);int level=0;
-            Paint blendPaint=new Paint(Paint.FILTER_BITMAP_FLAG);
+            check(request);sharp=resized(ready,640,360);
+            int w=640,h=360,len=w*h;
+            int[] sourcePixels=new int[len],low=new int[len],high=new int[len],out=new int[len],scratch=new int[len];
+            sharp.getPixels(sourcePixels,0,w,0,0,w,h);
+            System.arraycopy(sourcePixels,0,low,0,len);
+            System.arraycopy(sourcePixels,0,high,0,len);
+            PixelBlur.apply(high,scratch,w,h,1);
+            boolean hasHigh=true;
+            int level=0;
             for(int i=0;i<16;i++){
                 check(request);float radius=8f*(i+1)/16;int wanted=(int)radius;
-                while(level<wanted){if(low!=sharp)low.recycle();low=high;++level;high=level<8?blur(sharp,level+1):null;}
-                frames[i]=low.copy(Bitmap.Config.ARGB_8888,true);
-                if(high!=null&&radius>wanted){blendPaint.setAlpha(Math.round(255*(radius-wanted)));new Canvas(frames[i]).drawBitmap(high,0,0,blendPaint);}
+                while(level<wanted){
+                    System.arraycopy(high,0,low,0,len);
+                    ++level;
+                    if(level<8){
+                        System.arraycopy(sourcePixels,0,high,0,len);
+                        PixelBlur.apply(high,scratch,w,h,level+1);
+                        hasHigh=true;
+                    }else{
+                        hasHigh=false;
+                    }
+                }
+                int alpha=hasHigh&&radius>wanted?Math.round(255*(radius-wanted)):0;
+                int[] framePixels;
+                if(alpha>0){
+                    PixelBlur.blend(low,high,out,len,alpha);
+                    framePixels=out;
+                }else{
+                    framePixels=low;
+                }
+                Bitmap frame=Bitmap.createBitmap(w,h,Bitmap.Config.ARGB_8888);
+                frame.setPixels(framePixels,0,w,0,0,w,h);
+                frame.setHasAlpha(false);
                 // Queue texture preparation while idle, before the first drawer slide.
-                frames[i].prepareToDraw();
+                frame.prepareToDraw();
+                frames[i]=frame;
             }
             success=true;return frames;
         }finally{
-            if(low!=null&&low!=sharp)low.recycle();if(high!=null)high.recycle();if(sharp!=null)sharp.recycle();
+            if(sharp!=null)sharp.recycle();
             if(!success)for(Bitmap frame:frames)if(frame!=null)frame.recycle();
         }
     }

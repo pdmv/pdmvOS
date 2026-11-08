@@ -8,28 +8,31 @@ python3 tests/check_commands.py
 python3 tests/check_release_assets.py
 python3 tests/check_bootstrap.py
 bash -n pdmvos
+export PATH="/opt/homebrew/opt/rustup/bin:/opt/homebrew/opt/openjdk@17/libexec/openjdk.jdk/Contents/Home/bin:$HOME/.cargo/bin:$PATH"
+cargo test --manifest-path rust/Cargo.toml --quiet
+cargo build --release --manifest-path rust/Cargo.toml --quiet
 OUT="$(mktemp -d)"; trap 'rm -rf "$OUT"' EXIT
 javac -d "$OUT" \
-  app/src/main/java/dev/pdmv/os/{PixelBlur,DrawerFlow,SlotLayout,DisplayPolicy,UiGeometry,SpringValue,MotionProfile,FocusMotion,FocusDepth,ArtworkLayout,ArtworkDetector,SurfaceMorph,ArtworkTransform,HomeReturnMotion,ElasticBoundary,WifiFeedback,MenuMotion,ReturnSoundGate}.java \
+  app/src/main/java/dev/pdmv/os/{NativeCore,PixelBlur,DrawerFlow,SlotLayout,DisplayPolicy,UiGeometry,SpringValue,MotionProfile,FocusMotion,FocusDepth,ArtworkLayout,ArtworkDetector,SurfaceMorph,ArtworkTransform,HomeReturnMotion,ElasticBoundary,WifiFeedback,MenuMotion,ReturnSoundGate}.java \
   tests/{CheckPixelBlur,CheckDrawerFlow,CheckSlotLayout,CheckDisplayPolicy,CheckGeometry,CheckMotion,CheckFocusDepth,CheckFocusMotion,CheckArtworkLayout,CheckArtworkDetector,CheckDrawerMotion,CheckSurfaceMorph,CheckArtworkTransform,CheckHomeReturnMotion,CheckElasticBoundary,CheckWifiFeedback,CheckMenuMotion,CheckReturnSoundGate}.java
-java -cp "$OUT" dev.pdmv.os.CheckPixelBlur
-java -cp "$OUT" dev.pdmv.os.CheckDrawerFlow
-java -cp "$OUT" dev.pdmv.os.CheckSlotLayout
-java -cp "$OUT" dev.pdmv.os.CheckDisplayPolicy
-java -cp "$OUT" dev.pdmv.os.CheckGeometry
-java -cp "$OUT" dev.pdmv.os.CheckMotion
-java -cp "$OUT" dev.pdmv.os.CheckFocusDepth
-java -cp "$OUT" dev.pdmv.os.CheckFocusMotion
-java -cp "$OUT" dev.pdmv.os.CheckArtworkLayout
-java -cp "$OUT" dev.pdmv.os.CheckArtworkDetector
-java -cp "$OUT" dev.pdmv.os.CheckDrawerMotion
-java -cp "$OUT" dev.pdmv.os.CheckSurfaceMorph
-java -cp "$OUT" dev.pdmv.os.CheckArtworkTransform
-java -cp "$OUT" dev.pdmv.os.CheckHomeReturnMotion
-java -cp "$OUT" dev.pdmv.os.CheckElasticBoundary
-java -cp "$OUT" dev.pdmv.os.CheckWifiFeedback
-java -cp "$OUT" dev.pdmv.os.CheckMenuMotion
-java -cp "$OUT" dev.pdmv.os.CheckReturnSoundGate
+java -Djava.library.path=rust/target/release -cp "$OUT" dev.pdmv.os.CheckPixelBlur
+java -Djava.library.path=rust/target/release -cp "$OUT" dev.pdmv.os.CheckDrawerFlow
+java -Djava.library.path=rust/target/release -cp "$OUT" dev.pdmv.os.CheckSlotLayout
+java -Djava.library.path=rust/target/release -cp "$OUT" dev.pdmv.os.CheckDisplayPolicy
+java -Djava.library.path=rust/target/release -cp "$OUT" dev.pdmv.os.CheckGeometry
+java -Djava.library.path=rust/target/release -cp "$OUT" dev.pdmv.os.CheckMotion
+java -Djava.library.path=rust/target/release -cp "$OUT" dev.pdmv.os.CheckFocusDepth
+java -Djava.library.path=rust/target/release -cp "$OUT" dev.pdmv.os.CheckFocusMotion
+java -Djava.library.path=rust/target/release -cp "$OUT" dev.pdmv.os.CheckArtworkLayout
+java -Djava.library.path=rust/target/release -cp "$OUT" dev.pdmv.os.CheckArtworkDetector
+java -Djava.library.path=rust/target/release -cp "$OUT" dev.pdmv.os.CheckDrawerMotion
+java -Djava.library.path=rust/target/release -cp "$OUT" dev.pdmv.os.CheckSurfaceMorph
+java -Djava.library.path=rust/target/release -cp "$OUT" dev.pdmv.os.CheckArtworkTransform
+java -Djava.library.path=rust/target/release -cp "$OUT" dev.pdmv.os.CheckHomeReturnMotion
+java -Djava.library.path=rust/target/release -cp "$OUT" dev.pdmv.os.CheckElasticBoundary
+java -Djava.library.path=rust/target/release -cp "$OUT" dev.pdmv.os.CheckWifiFeedback
+java -Djava.library.path=rust/target/release -cp "$OUT" dev.pdmv.os.CheckMenuMotion
+java -Djava.library.path=rust/target/release -cp "$OUT" dev.pdmv.os.CheckReturnSoundGate
 if grep -R --include='*.java' -n 'disable-user\|pm uninstall\|pm clear' app/src/main/java; then
     echo 'Review dangerous package modifications above.' >&2;exit 1
 fi

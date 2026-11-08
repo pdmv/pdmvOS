@@ -55,7 +55,7 @@ final class GlassMaterial {
             pillShadows.put(key,bitmap);
             while(pillShadows.size()>8)pillShadows.remove(pillShadows.keySet().iterator().next());
         }
-        p.reset();p.setFilterBitmap(true);
+        p.reset();p.setAntiAlias(true);p.setFilterBitmap(true);
         if(sourceWidth==width){shadowDestination.set(x-pad,y-pad,x+w+pad,y+h+pad);c.drawBitmap(bitmap,null,shadowDestination,p);return;}
         // Keep both end caps at native size; stretch only the flat middle.
         // Width springs now reuse one raster instead of allocating a blurred
@@ -99,8 +99,9 @@ final class GlassMaterial {
     void drawFocusedControl(Canvas c,float x,float y,float size,float focus,int tint){
         if(focus<.001f)return;
         sample(c,wallpapers.frost(2),2,x,y,size,size,size/2f,0,0,.96f*focus);
-        p.reset();p.setAntiAlias(true);p.setColor(tint);p.setAlpha(Math.round(196f*focus));
+        p.reset();p.setAntiAlias(true);p.setDither(true);p.setColor(tint);p.setAlpha(Math.round(196f*focus));
         shape.draw(c,x,y,size,size,size/2f,p);
+        drawRimAlpha(c,x,y,size,size,size/2f,1,focus);
     }
     private void sample(Canvas c,Bitmap image,int slot,float x,float y,float w,float h,float r,float sampleX,float sampleY,float opacity){
         if(image==null||image.isRecycled()||opacity<.001f)return;
@@ -142,14 +143,45 @@ final class GlassMaterial {
     void setLiveRims(boolean active){liveRims=active;}
     boolean hasLiveRims(){return liveRims;}
     void drawDecorationOnly(Canvas c,float x,float y,float w,float h,float r,int kind){
+        int k=Math.max(0,Math.min(4,kind));
+        if(k==1||k==3){
+            drawItem(c,x,y,w,h,r,k,1f);
+            return;
+        }
         if(!liveRims){drawStaticDecoration(c,x,y,w,h,r,kind);return;}
         drawCachedDecoration(c,x,y,w,h,r,kind,false);
         drawRim(c,x,y,w,h,r,kind);
+    }
+    void drawItem(Canvas c,float x,float y,float w,float h,float r,float alpha){
+        drawItem(c,x,y,w,h,r,1,alpha);
+    }
+    private void drawItem(Canvas c,float x,float y,float w,float h,float r,int k,float alpha){
+        float a=UiGeometry.clamp(alpha,0f,1f);
+        if(a<.001f)return;
+        p.reset();p.setAntiAlias(true);p.setDither(true);
+        int smoke=SMOKE[k];
+        if(smoke!=0){
+            p.setColor(smoke);p.setAlpha(Math.round(Color.alpha(smoke)*a));
+            drawMaterialShape(c,x,y,w,h,r,k==3);
+        }
+        int glaze=GLAZE[k];
+        if(glaze!=0){
+            p.setColor(glaze);p.setAlpha(Math.round(Color.alpha(glaze)*a));
+            drawMaterialShape(c,x,y,w,h,r,k==3);
+        }
+        drawRimAlpha(c,x,y,w,h,r,k,a);
     }
     void drawStaticDecoration(Canvas c,float x,float y,float w,float h,float r,int kind){
         drawCachedDecoration(c,x,y,w,h,r,kind,true);
     }
     private void drawCachedDecoration(Canvas c,float x,float y,float w,float h,float r,int kind,boolean rim){
+        int k=Math.max(0,Math.min(4,kind));
+        if(!rim&&(k==1||k==3)){
+            p.reset();p.setAntiAlias(true);
+            p.setColor(SMOKE[k]);drawMaterialShape(c,x,y,w,h,r,k==3);
+            p.setColor(GLAZE[k]);drawMaterialShape(c,x,y,w,h,r,k==3);p.setAlpha(255);
+            return;
+        }
         if((kind==4||kind==2)&&r>=h*.5f-.25f){
             int cap=(int)Math.ceil(h),middle=8;
             if(w>=2*cap+middle){
@@ -158,7 +190,7 @@ final class GlassMaterial {
                 // flat center, rather than rasterizing/uploading a new rim at
                 // every intermediate width.
                 Bitmap strip=decoration(2*cap+middle,h,r,kind,rim);
-                p.reset();p.setFilterBitmap(true);
+                p.reset();p.setAntiAlias(true);p.setFilterBitmap(true);
                 decorationSource.set(0,0,cap,strip.getHeight());
                 decorationDestination.set(x,y,x+cap,y+h);c.drawBitmap(strip,decorationSource,decorationDestination,p);
                 decorationSource.set(cap,0,cap+middle,strip.getHeight());
@@ -168,7 +200,7 @@ final class GlassMaterial {
                 return;
             }
         }
-        Bitmap overlay=decoration(w,h,r,Math.max(0,Math.min(4,kind)),rim);
+        Bitmap overlay=decoration(w,h,r,k,rim);
         decorationDestination.set(x,y,x+w,y+h);
         p.reset();p.setFilterBitmap(true);p.setAntiAlias(true);c.drawBitmap(overlay,null,decorationDestination,p);
     }
@@ -204,21 +236,38 @@ final class GlassMaterial {
         p.setShader(null);p.setStyle(Paint.Style.FILL);
         if(rim)drawRim(c,x,y,w,h,r,k);
     }
+    private static final float[] EDGE_STOPS={0,.18f,.5f,.82f,1};
+    private final Matrix edgeMatrix=new Matrix();
+    private final LinearGradient[] rimShaders={
+        new LinearGradient(0,0,0,1,new int[]{0x28ffffff,0x0affffff,0x00ffffff,0x09ffffff,0x20ffffff},EDGE_STOPS,Shader.TileMode.CLAMP),
+        new LinearGradient(0,0,0,1,new int[]{0x58ffffff,0x0affffff,0x00ffffff,0x09ffffff,0x60ffffff},EDGE_STOPS,Shader.TileMode.CLAMP),
+        new LinearGradient(0,0,0,1,new int[]{0x70ffffff,0x0affffff,0x00ffffff,0x09ffffff,0x78ffffff},EDGE_STOPS,Shader.TileMode.CLAMP)
+    };
     void drawRim(Canvas c,float x,float y,float w,float h,float r,int kind){
+        drawRimAlpha(c,x,y,w,h,r,kind,1f);
+    }
+    void drawRimAlpha(Canvas c,float x,float y,float w,float h,float r,int kind,float alpha){
+        float a=UiGeometry.clamp(alpha,0f,1f);
+        if(a<.001f)return;
         // The reflection belongs to the surface's local coordinates. A global y
         // here is clamped by translated squircle paths, brightening the whole rim.
         int saved=c.save();c.translate(x,y);
         int k=Math.max(0,Math.min(4,kind));
-        p.reset();p.setAntiAlias(true);p.setStyle(Paint.Style.STROKE);
-        p.setStrokeWidth(k==1?.8f:.9f);
-        int top=k==1?0x28ffffff:k==0||k==3?0x58ffffff:0x70ffffff;
-        int bottom=k==1?0x20ffffff:k==0||k==3?0x60ffffff:0x78ffffff;
-        p.setShader(edge(0,0,h,top,bottom));
+        c.getMatrix(canvasTransform);
+        float baseScale=Math.max(.001f,samplingFrame.mapRadius(1f));
+        float currentScale=Math.max(.001f,canvasTransform.mapRadius(1f));
+        float relScale=UiGeometry.clamp(currentScale/baseScale,.55f,1f);
+        p.reset();p.setAntiAlias(true);p.setDither(true);p.setStyle(Paint.Style.STROKE);
+        p.setStrokeWidth((k==1?.85f:.9f)/relScale);
+        LinearGradient rimShader=rimShaders[k==1?0:(k==0||k==3)?1:2];
+        edgeMatrix.setScale(1f,Math.max(1f,h));rimShader.setLocalMatrix(edgeMatrix);
+        p.setShader(rimShader);
+        p.setAlpha(Math.round(255f*a));
         float inset=k==1?.5f:.7f;
         drawMaterialShape(c,inset,inset,w-2*inset,h-2*inset,Math.max(0,r-inset),k==3);
         p.setShader(null);p.setStyle(Paint.Style.FILL);c.restoreToCount(saved);
     }
     private Shader edge(float x,float y,float h,int top,int bottom){
-        return new LinearGradient(x,y,x,y+h,new int[]{top,0x0affffff,0x00ffffff,0x09ffffff,bottom},new float[]{0,.18f,.5f,.82f,1},Shader.TileMode.CLAMP);
+        return new LinearGradient(x,y,x,y+h,new int[]{top,0x0affffff,0x00ffffff,0x09ffffff,bottom},EDGE_STOPS,Shader.TileMode.CLAMP);
     }
 }

@@ -21,29 +21,10 @@ public final class SpringValue {
         // The solution is analytical, so dropped frames do not require small Euler steps.
         // Catch up real elapsed time after a slow 100–200 ms TV frame instead of
         // artificially extending the animation when FPS dips. Cap huge pause gaps.
-        double t=Math.min(.25,dt), x=value-target, v=velocity;
-        double gamma=damping*.5, w0=Math.sqrt(stiffness);
-        double nx,nv;
-        if(gamma<w0-1e-5){
-            double w=Math.sqrt(w0*w0-gamma*gamma), e=Math.exp(-gamma*t);
-            double a=x,b=(v+gamma*x)/w;
-            double cs=Math.cos(w*t),sn=Math.sin(w*t);
-            nx=e*(a*cs+b*sn);
-            nv=e*((b*w-gamma*a)*cs+(-a*w-gamma*b)*sn);
-        }else if(gamma>w0+1e-5){
-            double s=Math.sqrt(gamma*gamma-w0*w0),r1=-gamma+s,r2=-gamma-s;
-            double c1=(v-r2*x)/(r1-r2),c2=x-c1;
-            nx=c1*Math.exp(r1*t)+c2*Math.exp(r2*t);
-            nv=r1*c1*Math.exp(r1*t)+r2*c2*Math.exp(r2*t);
-        }else{
-            double e=Math.exp(-gamma*t),b=v+gamma*x;
-            nx=e*(x+b*t);nv=e*(v-gamma*b*t);
-        }
-        value=target+(float)nx;velocity=(float)nv;
-        if(Math.abs(value-target)<.0005f && Math.abs(velocity)<.012f){
-            value=target;velocity=0f;return false;
-        }
-        return true;
+        long packed=NativeCore.springUpdate(value,target,velocity,stiffness,damping,dt);
+        value=Float.intBitsToFloat((int)(packed>>>32));
+        velocity=Float.intBitsToFloat((int)packed);
+        return busy();
     }
     public boolean busy(){return value!=target||velocity!=0f;}
 }

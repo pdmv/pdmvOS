@@ -10,7 +10,7 @@ Máy phát hành của dự án cần khôi phục khóa đã có trước khi b
 
 ## Dựng release cục bộ
 
-Cần JDK 17, Android platform 35 và build-tools 34.0.0. Thiết lập `JAVA_HOME` và `ANDROID_HOME`, sau đó chạy các lệnh sau.
+Cài JDK, Android SDK/NDK và các target Rust theo [hướng dẫn phát triển](development.md). Thiết lập `JAVA_HOME` và `ANDROID_HOME`, sau đó chạy các lệnh sau.
 
 ```sh
 ./tools/build-release.sh

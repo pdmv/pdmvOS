@@ -11,14 +11,13 @@ public final class UiGeometry {
     public static final float POPUP_RADIUS=POPUP_ROW_RADIUS+POPUP_PADDING;
     public static final float POPUP_HEADER=84f, POPUP_PITCH=POPUP_ROW_HEIGHT+POPUP_GAP;
     public static float popupItemScale(float focus,float press){
-        float selected=clamp(focus,0f,1f);
         // The focused footprint is the layout size, so it keeps the panel inset.
-        return 1f-(.12f*(1f-selected)+.07f*clamp(press,0f,1f)*selected)/1.06f;
+        return NativeCore.geometryPopupItemScale(focus,press);
     }
     public static final float PREVIEW_PADDING=10f, PREVIEW_INNER_RADIUS=32f;
     public static final float PREVIEW_OUTER_RADIUS=PREVIEW_INNER_RADIUS+PREVIEW_PADDING;
     public static float popupHeight(int count){
-        return POPUP_HEADER + (Math.max(1,count)-1)*POPUP_PITCH+POPUP_ROW_HEIGHT+POPUP_PADDING;
+        return NativeCore.geometryPopupHeight(count);
     }
     public static final int COLUMNS = 6, VISIBLE_ROWS = 3;
     public static final float PITCH = 284f;
@@ -43,40 +42,37 @@ public final class UiGeometry {
     public static final float GRID_CLIP_TOP = GRID_TOP-20f;
     public static final float GRID_CLIP_BOTTOM = HEIGHT;
     public static int belowDock(int column,int firstVisibleRow,int itemCount){
-        if(itemCount<=0)return -1;
-        int row=Math.max(0,Math.min(firstVisibleRow,(itemCount-1)/COLUMNS));
-        return Math.min(itemCount-1,row*COLUMNS+Math.max(0,Math.min(COLUMNS-1,column)));
+        return NativeCore.geometryBelowDock(column,firstVisibleRow,itemCount);
     }
     public static float centerX(int col) {
-        if (col < 0 || col >= COLUMNS) throw new IllegalArgumentException("col " + col);
-        return DOCK_LEFT + DOCK_PADDING + TILE_MAX_WIDTH/2f + col * PITCH;
+        return NativeCore.geometryCenterX(col);
     }
-    public static float rowTop(int row, float scrollRows) { return GRID_TOP + (row-scrollRows) * ROW_PITCH; }
+    public static float rowTop(int row, float scrollRows) { return NativeCore.geometryRowTop(row, scrollRows); }
     public static float gridTransitionOffset(float drawerProgress){
-        return (HEIGHT-GRID_TOP)*(1f-drawerProgress);
+        return NativeCore.geometryGridTransitionOffset(drawerProgress);
     }
     public static float drawerGridClipTop(float drawerProgress){
-        return dockTop(drawerProgress)+DOCK_PADDING+TILE_MAX_HEIGHT+12f;
+        return NativeCore.geometryDrawerGridClipTop(drawerProgress);
     }
-    public static float gridClipBottom(float drawerProgress){return HEIGHT;}
+    public static float gridClipBottom(float drawerProgress){return NativeCore.geometryGridClipBottom(drawerProgress);}
     public static float dockTop(float drawerProgress) {
-        return DOCK_HOME_TOP + (DOCK_APPS_TOP-DOCK_HOME_TOP)*drawerProgress;
+        return NativeCore.geometryDockTop(drawerProgress);
     }
-    public static float clamp(float value,float low,float high) { return Math.max(low,Math.min(high,value)); }
+    public static float clamp(float value,float low,float high) { return NativeCore.geometryClamp(value,low,high); }
+    public static void squircleVertices(float left,float top,float right,float bottom,float radius,float n,float[] out266){
+        NativeCore.geometrySquircleVertices(left,top,right,bottom,radius,n,out266);
+    }
+    public static void menuRect(int itemCount,int sourceHeader,boolean nearTile,float anchorX,float anchorY,float[] out4){
+        NativeCore.geometryMenuRect(itemCount,sourceHeader,nearTile,anchorX,anchorY,out4);
+    }
+    public static void dialogRect(int lineCount,boolean hasProgress,float[] out4){
+        NativeCore.geometryDialogRect(lineCount,hasProgress,out4);
+    }
+    public static void dialogButtonRect(float panelLeft,float panelRight,float panelBottom,boolean twoButtons,int index,float[] out4){
+        NativeCore.geometryDialogButtonRect(panelLeft,panelRight,panelBottom,twoButtons,index,out4);
+    }
     public static void assertInvariants() {
-        if (DOCK_RADIUS != TILE_RADIUS+DOCK_PADDING) throw new AssertionError("radii");
-        if (POPUP_RADIUS != POPUP_ROW_RADIUS+POPUP_PADDING) throw new AssertionError("popup radius");
-        if (PREVIEW_OUTER_RADIUS != PREVIEW_INNER_RADIUS+PREVIEW_PADDING) throw new AssertionError("preview radius");
-        if (DOCK_LEFT < 0 || DOCK_LEFT + DOCK_WIDTH > WIDTH) throw new AssertionError("dock offscreen");
-        if (TILE_MAX_WIDTH*(1f+FOCUS_GAIN) >= PITCH) throw new AssertionError("focus overlaps neighboring cell");
-        if (TILE_RADIUS<=0 || TILE_RADIUS>=TILE_IDLE_HEIGHT/2f) throw new AssertionError("tile corner radius exceeds half idle height");
-        if (DOCK_RADIUS>=DOCK_HEIGHT/2f) throw new AssertionError("dock should remain a softened rectangle, not a full capsule");
-        if (DOCK_APPS_TOP < 32 || DOCK_HOME_TOP+DOCK_HEIGHT > HEIGHT-48) throw new AssertionError("vertical safe zone");
-        if (rowTop(VISIBLE_ROWS-1, 0f)+TILE_MAX_HEIGHT+33f > GRID_CLIP_BOTTOM) throw new AssertionError("grid offscreen");
-        for (int i=0;i<COLUMNS;i++) {
-            float x=centerX(i);
-            if (x-TILE_MAX_WIDTH/2f < DOCK_LEFT+DOCK_PADDING-0.1f) throw new AssertionError("tile left");
-            if (x+TILE_MAX_WIDTH/2f > DOCK_LEFT+DOCK_WIDTH-DOCK_PADDING+0.1f) throw new AssertionError("tile right");
-        }
+        String error=NativeCore.geometryCheckInvariants();
+        if(error!=null)throw new AssertionError(error);
     }
 }

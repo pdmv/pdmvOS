@@ -27,6 +27,14 @@ with zipfile.ZipFile(apk) as archive:
     require('assets/wallpapers/wallpaper.jpg' in names,'Wallpaper missing')
     require('assets/solar/CREDITS.txt' in names,'Solar attribution missing')
     require(len([n for n in names if n.endswith('.dex')])>0,'No application code')
+    for abi, elf_class, machine in [('arm64-v8a', 2, 183), ('armeabi-v7a', 1, 40), ('x86_64', 2, 62)]:
+        library = f'lib/{abi}/libpdmvos_core.so'
+        require(names.count(library) == 1, f'Missing or duplicate Rust core for {abi}')
+        with archive.open(library) as binary:
+            header = binary.read(20)
+        require(header[:6] == b'\x7fELF' + bytes([elf_class, 1])
+                and int.from_bytes(header[18:20], 'little') == machine,
+                f'Invalid Rust core architecture for {abi}')
 report={'version':version['versionName'],'versionCode':int(version['versionCode']),
         'sha256':hashlib.sha256(apk.read_bytes()).hexdigest(),'signerSha256':fingerprint.group(1),
         'bytes':apk.stat().st_size,'minSdk':int(re.search(r"sdkVersion:'([0-9]+)'",badging).group(1)),'targetSdk':int(re.search(r"targetSdkVersion:'([0-9]+)'",badging).group(1)),'debuggable':False,'releaseSignatureVerified':True,

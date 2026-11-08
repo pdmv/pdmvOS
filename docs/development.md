@@ -3,7 +3,8 @@
 ## Môi trường
 
 - JDK 17.
-- Android SDK platform 35 và build-tools 34.0.0.
+- Android SDK platform 35, build-tools 34.0.0 và Android NDK 27.
+- Rust (`rustup`, `cargo`) kèm các target Android (`aarch64-linux-android`, `armv7-linux-androideabi`, `x86_64-linux-android`).
 - Python 3.9 trở lên.
 - Android Platform Tools để làm việc với thiết bị.
 
@@ -22,7 +23,8 @@ APK debug nằm ở `app/build/outputs/apk/debug/app-debug.apk`. Khóa debug dà
 
 | Đường dẫn | Nội dung |
 | --- | --- |
-| `app/src/main/java/dev/pdmv/os/` | Activity, renderer, chuyển động, ứng dụng và trạng thái hệ thống |
+| `app/src/main/java/dev/pdmv/os/` | Activity, renderer, cầu nối JNI (`NativeCore`) và trạng thái hệ thống Android |
+| `rust/` | Nhân Rust (`pdmvos-core`): xử lý ảnh/blur, vật lý lò xo, hình học bố cục và chính sách miền |
 | `app/src/main/assets/` | Font, hình nền, nguồn biểu tượng và thông tin giấy phép |
 | `app/src/main/res/` | Icon Android, âm thanh, manifest resources |
 | `tools/` | Build, ký, vận hành ADB và phát hành |

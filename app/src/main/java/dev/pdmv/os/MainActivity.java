@@ -283,7 +283,18 @@ public final class MainActivity extends Activity {
     }
     private void trimOptionalResources(){
         if(wallpapers!=null)wallpapers.trimOptionalMemory();
-        if(view!=null){view.menuTextures.evictAll();view.squircleCache.clear();view.normalizedTexts.evictAll();view.fittedTexts.evictAll();view.invalidateToastBackdrop();view.glassMaterials.trimMemory();view.invalidateScene();}
+        if(view!=null){
+            view.menuTextures.evictAll();view.textTextures.evictAll();view.squircleCache.clear();
+            view.normalizedTexts.evictAll();view.fittedTexts.evictAll();view.clockMetrics.evictAll();
+            view.tileSourcePixels=null;view.tileMaskedPixels=null;
+            if(view.dialogAction==null&&!view.dialogReveal.busy()){
+                view.dialogBackdrop=null;view.dialogBackdropArea=null;view.dialogBackdropKey=Long.MIN_VALUE;
+            }
+            if(view.returningTile==null&&view.launchingTile==null){
+                view.morphTexture=null;view.morphTextureSource=null;view.morphBitmap=null;view.morphShader=null;
+            }
+            view.invalidateToastBackdrop();view.glassMaterials.trimMemory();view.invalidateScene();
+        }
         if(resumed&&view!=null){
             view.handler.removeCallbacks(resumeMaintenance);view.handler.postDelayed(resumeMaintenance,3000);
         }
@@ -457,7 +468,7 @@ public final class MainActivity extends Activity {
         private final android.text.TextPaint measurePaint=new android.text.TextPaint(Paint.ANTI_ALIAS_FLAG);
         private String clockCache="";
         private boolean moveMode, moveDock;
-        private boolean pressStartedInMenu;
+        private boolean pressStartedInMenu, pressStartedInDialog;
         private boolean holdingOK, longPressed;
         private float canvasScale=1f,canvasLeft=0f,canvasTop=0f;
         private static final float MENU_WIDTH=440f, MENU_PAD=UiGeometry.POPUP_PADDING, MENU_ROW=UiGeometry.POPUP_PITCH;
@@ -473,8 +484,10 @@ public final class MainActivity extends Activity {
             @Override public void run(){
                 if(!resumed)return;
                 String next=formatClock(new Date());
-                if(!next.equals(clockCache)){clockCache=next;invalidatePreviewCache();invalidateScene();}
-                handler.postDelayed(this,10000);
+                if(!next.equals(clockCache)){clockCache=next;invalidatePreviewCache();invalidate();}
+                long now=System.currentTimeMillis();
+                long delay=Math.max(500L,60_000L-(now%60_000L)+25L);
+                handler.postDelayed(this,Math.min(delay,10_000L));
             }
         };
         LauncherView(){
@@ -538,37 +551,15 @@ public final class MainActivity extends Activity {
          * preserve the rounded tvOS character on landscape app tiles. The special
          * capsule case is a circular-end pill, not a square-ish superellipse.
          * Cache paths by raster size and scale to the exact floating canvas bounds. */
+        private final float[] squircleVertices=new float[266];
         private Path squirclePath(float w,float h,float r){
             int iw=Math.max(1,Math.round(w)), ih=Math.max(1,Math.round(h));
             int ir=Math.max(0,Math.round(Math.min(r,Math.min(iw,ih)*.5f)));
             String key=iw+"x"+ih+"r"+ir;
             Path cached=squircleCache.get(key);if(cached!=null)return cached;
-            final double n=3.05;final int steps=32;
-            float rr=ir,right=iw,bottom=ih;
-            Path p=new Path();p.moveTo(rr,0);p.lineTo(right-rr,0);
-            for(int i=1;i<=steps;i++){
-                double a=(Math.PI*.5)*i/steps;
-                float sx=(float)Math.pow(Math.sin(a),2.0/n), cy=(float)Math.pow(Math.cos(a),2.0/n);
-                p.lineTo(right-rr+rr*sx,rr-rr*cy);
-            }
-            p.lineTo(right,bottom-rr);
-            for(int i=1;i<=steps;i++){
-                double a=(Math.PI*.5)*i/steps;
-                float cx=(float)Math.pow(Math.cos(a),2.0/n), sy=(float)Math.pow(Math.sin(a),2.0/n);
-                p.lineTo(right-rr+rr*cx,bottom-rr+rr*sy);
-            }
-            p.lineTo(rr,bottom);
-            for(int i=1;i<=steps;i++){
-                double a=(Math.PI*.5)*i/steps;
-                float sx=(float)Math.pow(Math.sin(a),2.0/n), cy=(float)Math.pow(Math.cos(a),2.0/n);
-                p.lineTo(rr-rr*sx,bottom-rr+rr*cy);
-            }
-            p.lineTo(0,rr);
-            for(int i=1;i<=steps;i++){
-                double a=(Math.PI*.5)*i/steps;
-                float cx=(float)Math.pow(Math.cos(a),2.0/n), sy=(float)Math.pow(Math.sin(a),2.0/n);
-                p.lineTo(rr-rr*cx,rr-rr*sy);
-            }
+            UiGeometry.squircleVertices(0f,0f,iw,ih,ir,3.05f,squircleVertices);
+            Path p=new Path();p.moveTo(squircleVertices[0],squircleVertices[1]);
+            for(int i=2;i<266;i+=2)p.lineTo(squircleVertices[i],squircleVertices[i+1]);
             p.close();squircleCache.put(key,p);return p;
         }
         private void drawSquircle(Canvas c,float x,float y,float w,float h,float r,Paint p){
@@ -641,15 +632,14 @@ public final class MainActivity extends Activity {
             clip.addRoundRect(bounds,radius,radius,Path.Direction.CW);
             c.clipPath(clip);
         }
+        private final int[] cropScratch=new int[4];
+        private final float[] rectScratch=new float[4];
         private void image(Canvas c,Bitmap bmp){image(c,bmp,1f);}
         private void image(Canvas c,Bitmap bmp,float opacity){
             if(bmp==null)return;
-            float width=bmp.getWidth(),height=bmp.getHeight();
-            float ratio=Math.max(UiGeometry.WIDTH/width,UiGeometry.HEIGHT/height);
-            float cropW=UiGeometry.WIDTH/ratio,cropH=UiGeometry.HEIGHT/ratio;
+            ArtworkLayout.centerCropRect(bmp.getWidth(),bmp.getHeight(),UiGeometry.WIDTH,UiGeometry.HEIGHT,cropScratch);
             paint.reset();paint.setAlpha(Math.round(255*opacity));paint.setFilterBitmap(true);paint.setAntiAlias(true);paint.setColor(0xffffffff);
-            wallpaperSource.set((int)((width-cropW)/2),(int)((height-cropH)/2),
-                (int)((width+cropW)/2),(int)((height+cropH)/2));
+            wallpaperSource.set(cropScratch[0],cropScratch[1],cropScratch[2],cropScratch[3]);
             c.drawBitmap(bmp,wallpaperSource,wallpaperDestination,paint);
         }
         private void wallpaper(Canvas c){
@@ -673,9 +663,8 @@ public final class MainActivity extends Activity {
         private float rowOffset(int row){return UiGeometry.gridTransitionOffset(drawerFlow.rowProgress(row-gridScroll.value));}
         private float gridClipTop(){return docTop()+UiGeometry.DOCK_PADDING+UiGeometry.TILE_MAX_HEIGHT+12f;}
         private boolean updateMenuSelection(float dt){
-            float difference=menuSelection.target-menuSelection.value;
-            menuSelection.value+=difference*(1f-(float)Math.exp(-dt/.055f));menuSelection.velocity=0;
-            if(Math.abs(menuSelection.target-menuSelection.value)<.001f)menuSelection.value=menuSelection.target;
+            menuSelection.value=MotionProfile.stepExponential(menuSelection.value,menuSelection.target,dt,.055f,.001f);
+            menuSelection.velocity=0;
             return menuSelection.value!=menuSelection.target;
         }
         private float tileWidth(boolean focused){return UiGeometry.TILE_IDLE_WIDTH + (UiGeometry.TILE_MAX_WIDTH-UiGeometry.TILE_IDLE_WIDTH)*(focused?1:0);}
@@ -735,10 +724,11 @@ public final class MainActivity extends Activity {
             active=drawerFlow.update(drawer.target,dt)|active;
             active=edgeElastic.update(dt)|active;
             if(edgeX.busy()||edgeY.busy()||edgeWasMoving){
-                if(edgeRegion==1)invalidateScene();
-                if(edgeRegion==2 && headerNode!=null)headerNode.invalidate();
+                if(edgeRegion==1||lastEdgeRegion==1)invalidateScene();
+                if((edgeRegion==2||lastEdgeRegion==2) && headerNode!=null)headerNode.invalidate();
             }
             edgeWasMoving=edgeX.busy()||edgeY.busy();
+            if(!edgeWasMoving)lastEdgeRegion=edgeRegion;
             tilePress.aim(holdingOK&&!pressStartedInMenu&&!focusHeader?1f:0f,holdingOK?MotionProfile.PRESS_IN_K:MotionProfile.PRESS_OUT_K,holdingOK?MotionProfile.PRESS_IN_D:MotionProfile.PRESS_OUT_D);
             clockPillWidth();
             if(!shownClock.equals(clock())){previousClock=shownClock;shownClock=clock();clockChange.value=0;clockChange.velocity=0;clockChange.aim(1);}
@@ -785,12 +775,16 @@ public final class MainActivity extends Activity {
             }
             if(menu==null && closingMenu!=null && !menuReveal.busy() && menuReveal.value==0f){
                 closingMenu=null;
+                if(dialogReveal.value>.001f||toastReveal.value>.001f)active=true;
+            }
+            if(dialogAction==null && !dialogReveal.busy() && dialogReveal.value==0f && dialogBackdrop!=null){
+                dialogBackdrop=null;dialogBackdropArea=null;dialogBackdropKey=Long.MIN_VALUE;
             }
             for(int i=0;i<headerButtonFocus.length;i++){headerButtonFocus[i].aim(page==0&&focusHeader&&headerSelection==i&&!popupOwnsHeaderFocus()?1f:0f);active=headerButtonFocus[i].update(dt)|active;}
             headerPress.aim(focusHeader&&!popupOwnsHeaderFocus()&&holdingOK&&!pressStartedInMenu?1f:0f);active=headerPress.update(dt)|radioChange.update(dt)|active;
-            menuRowEmphasis.aim(menu!=null&&menu.selected>=0?1f:0f);
-            active=menuRowEmphasis.update(dt)|active;
             Menu animatedMenu=menu!=null?menu:closingMenu;
+            menuRowEmphasis.aim(animatedMenu!=null&&animatedMenu.selected>=0&&(menu==null||dialogAction==null)?1f:0f);
+            active=menuRowEmphasis.update(dt)|active;
             if(animatedMenu!=null)active=animatedMenu.frostMix.update(dt)|active;
             dialogChoice.aim(dialogConfirm?1f:0f);
             active=toastWidth.update(dt)|toastChange.update(dt)|toastReveal.update(dt)|dialogReveal.update(dt)|dialogChoice.update(dt)|active;
@@ -821,14 +815,14 @@ public final class MainActivity extends Activity {
                 paint.setColorFilter(null);
                 drawInstallProgress(c,tile,0,0,252,142);
                 if(!dock && tile.labelAlpha.value>.003f){
-                    textOpacity=UiGeometry.clamp(tile.labelAlpha.value,0f,1f);
-                    drawFittedText(c,tile.label,126,UiGeometry.LABEL_BASELINE+MotionProfile.LABEL_START_Y*(1f-textOpacity),UiGeometry.APP_LABEL_SIZE,fg(),239);
-                    textOpacity=1f;
+                    float alpha=UiGeometry.clamp(tile.labelAlpha.value,0f,1f);
+                    menuBitmap(c,tileLabelBitmap(tile.label),0f,UiGeometry.LABEL_BASELINE-24f+MotionProfile.LABEL_START_Y*(1f-alpha),alpha);
                 }
                 c.restoreToCount(padded);
             }
         }
         private int tileGeneration;
+        private final float[] tileTransform=new float[8];
         private final java.util.IdentityHashMap<Tile,Integer> tileSlots=new java.util.IdentityHashMap<>();
         private final ArrayList<Tile> indexedDock=new ArrayList<>(),indexedGrid=new ArrayList<>();
         private void syncTileNodes(){
@@ -864,40 +858,33 @@ public final class MainActivity extends Activity {
                 boolean shown=true;
                 if(!dock && !tile.traveling && (y+112<gridClipTop()||y-71>UiGeometry.gridClipBottom(drawer.value)))shown=false;
                 node.setVisibility(shown?View.VISIBLE:View.INVISIBLE);
-                float z=UiGeometry.clamp(tile.scale.value,0f,1.025f);
                 boolean selected=moveMode?(dock==moveDock && index==(dock?dockFocus:gridFocus)):
                     (dock?(page==0&&!focusHeader||page==1&&focusDrawerDock)&&index==dockFocus:page==1&&!focusDrawerDock&&index==gridFocus);
                 float pushed=selected?tilePress.value:0f;
-                float visible=UiGeometry.clamp(tile.presence.value,0f,1f);
-                float compression=(1f-MotionProfile.PRESS_DEPTH*UiGeometry.clamp(pushed,-.12f,1f))*(tile.retired?visible:.94f+.06f*visible);
-                float sx=(UiGeometry.TILE_IDLE_WIDTH+(UiGeometry.TILE_MAX_WIDTH-UiGeometry.TILE_IDLE_WIDTH)*z)/252f*compression;
-                float sy=(UiGeometry.TILE_IDLE_HEIGHT+(UiGeometry.TILE_MAX_HEIGHT-UiGeometry.TILE_IDLE_HEIGHT)*z)/142f*compression;
-                float tx=canvasLeft+x*canvasScale-138f,ty=canvasTop+y*canvasScale-83f;
-                float scaleX=sx*canvasScale*(1f+UiGeometry.FOCUS_GAIN*z),scaleY=sy*canvasScale*(1f+UiGeometry.FOCUS_GAIN*z);
-                if(tile==edgeTile && edgeRegion==1){
-                    tx+=edgeX.value*3f*canvasScale;ty+=edgeY.value*3f*canvasScale;
-                    scaleX*=1f+.022f*edgeX.value*edgeAnchorX;scaleY*=1f+.022f*edgeY.value*edgeAnchorY;
-                }
-                float travelX=MotionProfile.strain(tile.offsetX.velocity,1600f,.018f);
-                float travelY=MotionProfile.strain(tile.offsetY.velocity,1100f,.018f);
-                float scrollY=!dock?scrollStrain:0f;
-                scaleX*=1f+travelX-.38f*(travelY+scrollY);
-                scaleY*=1f+travelY+scrollY-.38f*travelX;
+                MotionProfile.resolveTileTransform(
+                    x,y,tile.scale.value,pushed,tile.presence.value,
+                    tile.retired,tile.exiting,selected,tile.traveling,
+                    dock,tile==edgeTile && edgeRegion==1,
+                    canvasLeft,canvasTop,canvasScale,
+                    edgeX.value,edgeY.value,edgeAnchorX,edgeAnchorY,
+                    tile.offsetX.velocity,tile.offsetY.velocity,scrollStrain,
+                    tile.offsetX.value,tile.offsetY.value,drawer.value,
+                    tile==launchingTile||tile==returningTile,tileTransform);
+                float sy=tileTransform[4];
                 // Commit each property once; intermediate base values used to
                 // dirty render nodes even when their final transform was stable.
-                node.setX(tx);node.setY(ty);node.setScaleX(scaleX);node.setScaleY(scaleY);
+                node.setX(tileTransform[0]);node.setY(tileTransform[1]);
+                node.setScaleX(tileTransform[2]);node.setScaleY(tileTransform[3]);
                 node.setRotation(tile.tilt.value+tile.ring.value);
-                float departure=UiGeometry.clamp((Math.abs(tile.offsetX.value)+Math.abs(tile.offsetY.value))/UiGeometry.TILE_MAX_HEIGHT,0f,1f);
-                float homeExit=!dock && tile.traveling?departure+(1f-departure)*UiGeometry.clamp(drawer.value,0f,1f):1f;
-                node.setAlpha(visible*homeExit*((tile==launchingTile||tile==returningTile)?0f:1f));
-                node.setTranslationZ(tile.exiting?3f:selected?4f:tile.traveling?2f:0f);
+                node.setAlpha(tileTransform[5]);
+                node.setTranslationZ(tileTransform[6]);
                 if(!dock && !tile.traveling && sy>.00001f){
                     int top=(int)Math.max(0,71f+(gridClipTop()-y)/sy);
                     int bottom=(int)Math.min(UiGeometry.TILE_NODE_HEIGHT,71f+(UiGeometry.gridClipBottom(drawer.value)-y)/sy);
                     if(top==0 && bottom==UiGeometry.TILE_NODE_HEIGHT)node.setClipBounds(null);
                     else{localTileClip.set(0,top+12,276,Math.max(top,bottom)+12);node.setClipBounds(localTileClip);}
                 }else node.setClipBounds(null);
-                int tint=Math.round(UiGeometry.clamp(z,0f,1f)*64);
+                int tint=(int)tileTransform[7];
                 if(node.tint!=tint || node.label!=tile.labelAlpha.value || node.rendered!=tile.image || node.session!=tile.installSessionId || node.progress!=tile.installSweep.value || node.reveal!=tile.installReveal.value || labelsChanged){
                     node.tint=tint;node.label=tile.labelAlpha.value;node.rendered=tile.image;node.session=tile.installSessionId;node.progress=tile.installSweep.value;node.reveal=tile.installReveal.value;node.invalidate();
                 }
@@ -1042,9 +1029,8 @@ public final class MainActivity extends Activity {
         };
         private boolean advanceDialogProgress(float dt){
             if(dialogProgress<0||shownDialogProgress>=dialogProgress)return false;
-            shownDialogProgress+=(dialogProgress-shownDialogProgress)*(1f-(float)Math.exp(-dt/.16f));
-            if(dialogProgress-shownDialogProgress>.2f)return true;
-            shownDialogProgress=dialogProgress;
+            shownDialogProgress=MotionProfile.stepExponential(shownDialogProgress,dialogProgress,dt,.16f,.2f);
+            if(shownDialogProgress<dialogProgress)return true;
             if(dialogProgress==100&&updateDialog)handler.postDelayed(finishUpdateProgress,140);
             return true;
         }
@@ -1137,15 +1123,20 @@ public final class MainActivity extends Activity {
             long key=System.identityHashCode(wallpapers.full());
             key=key*31+System.identityHashCode(wallpapers.frost(2));
             key=mixSceneValue(key,drawer.value);key=mixSceneValue(key,listBlur.value);key=mixSceneValue(key,gridScroll.value);
-            key=mixSceneValue(key,edgeX.value);key=mixSceneValue(key,edgeY.value);key=mixSceneValue(key,startupReveal.value);key=mixSceneValue(key,dockSpring.value);
+            if(edgeRegion==1||(edgeRegion==2&&(area==null||area.top<150))){
+                key=mixSceneValue(key,edgeX.value);key=mixSceneValue(key,edgeY.value);
+            }
+            key=mixSceneValue(key,startupReveal.value);key=mixSceneValue(key,dockSpring.value);
             if(headerNode!=null&&(area==null||area.top<150)){
                 key=key*31+headerStamp.hashCode();
-                for(float value:new float[]{clockWidth.value,clockChange.value,radioChange.value,headerPress.value,headerFocusAnim.value})key=key*31+Float.floatToIntBits(value);
-                for(SpringValue focus:headerButtonFocus)key=key*31+Float.floatToIntBits(focus.value);
+                key=mixSceneValue(key,clockWidth.value);key=mixSceneValue(key,clockChange.value);
+                key=mixSceneValue(key,radioChange.value);key=mixSceneValue(key,headerPress.value);
+                key=mixSceneValue(key,headerFocusAnim.value);
+                for(SpringValue focus:headerButtonFocus)key=mixSceneValue(key,focus.value);
             }
             for(Tile tile:catalog.all){
                 TileNode node=tileNodes.get(tile.id);
-                if(area!=null){
+                if(area!=null && !moveMode){
                     if(node==null||node.getVisibility()!=VISIBLE)continue;
                     // Exclude only the transparent antialiasing gutter. Its
                     // transform cannot change any pixel behind the popup.
@@ -1188,7 +1179,10 @@ public final class MainActivity extends Activity {
                 RectF bounds=menuVisualRect(behind);bounds.inset(-28,-52);
                 if(RectF.intersects(bounds,area)){
                     key=key*31+System.identityHashCode(behind);
-                    for(float value:new float[]{menuReveal.value,menuContent.value,menuSelection.value,menuRowEmphasis.value,press.value,behind.frostMix.value})key=key*31+Float.floatToIntBits(value);
+                    key=mixSceneValue(key,menuReveal.value);key=mixSceneValue(key,menuContent.value);
+                    key=mixSceneValue(key,menuSelection.value);key=mixSceneValue(key,menuRowEmphasis.value);
+                    key=mixSceneValue(key,press.value);key=mixSceneValue(key,behind.frostMix.value);
+                    if(edgeRegion==3){key=mixSceneValue(key,edgeX.value);key=mixSceneValue(key,edgeY.value);}
                 }
             }
             return key;
@@ -1249,12 +1243,18 @@ public final class MainActivity extends Activity {
             material(c,960-w/2,930,w,h,h/2,4);
             drawSolar(c,"info",960-w/2+38,930+h/2,28,accent());
             float content=UiGeometry.clamp(toastChange.value,0,1);
-            textOpacity=1-content;if(!previousToast.isEmpty()&&textOpacity>.001f)drawSettingsText(c,previousToast,960-w/2+64,930+h/2-(metrics.ascent+metrics.descent)/2,24,fg(),false,w-88);
-            textOpacity=content;drawSettingsText(c,toastMessage,960-w/2+64,930+h/2-(metrics.ascent+metrics.descent)/2,24,fg(),false,w-88);textOpacity=1f;
+            float baseline=h/2-(metrics.ascent+metrics.descent)/2;
+            int textWidth=Math.max(1,Math.round(w-88)),textHeight=Math.max(1,Math.round(h));
+            if(!previousToast.isEmpty()&&1-content>.001f)
+                menuBitmap(c,toastLabelBitmap(previousToast,textWidth,textHeight,baseline),960-w/2+64,930,1-content);
+            if(!toastMessage.isEmpty()&&content>.001f)
+                menuBitmap(c,toastLabelBitmap(toastMessage,textWidth,textHeight,baseline),960-w/2+64,930,content);
+            textOpacity=1f;
             c.restoreToCount(save);
         }
         private void showDialog(String title,String body,String button,Runnable action){
-            closeMenu();holdingOK=false;handler.removeCallbacks(holdAction);press.aim(0f);
+            clearEdgeOnContextSwitch();
+            closeMenu();holdingOK=false;pressStartedInDialog=false;handler.removeCallbacks(holdAction);settleReturnState(press,0f);
             dialogTitle=title;dialogBody=body;dialogButton=button;dialogAction=action;dialogConfirm=false;
             settleReturnState(dialogChoice,0);
             handler.removeCallbacks(finishUpdateProgress);
@@ -1272,9 +1272,10 @@ public final class MainActivity extends Activity {
             glassMaterials.setMenuBackdrop(dialogBackdrop,dialogBackdropArea);
         }
         private void dismissDialog(){
+            clearEdgeOnContextSwitch();
             dialogDismissals++;
             handler.removeCallbacks(finishUpdateProgress);
-            dialogAction=null;updateDialog=false;dialogReveal.aim(0f);holdingOK=false;press.aim(0f,MotionProfile.PRESS_OUT_K,MotionProfile.PRESS_OUT_D);invalidate();
+            dialogAction=null;updateDialog=false;dialogReveal.aim(0f);holdingOK=false;pressStartedInDialog=false;press.aim(0f,MotionProfile.PRESS_OUT_K,MotionProfile.PRESS_OUT_D);invalidate();
         }
         private String measuredDialogBody;
         private ArrayList<String> measuredDialogLines;
@@ -1286,15 +1287,12 @@ public final class MainActivity extends Activity {
             lines.add(line);measuredDialogBody=dialogBody;measuredDialogLines=lines;return lines;
         }
         private RectF dialogRect(){
-            float h=DIALOG_BODY_TOP+dialogLines().size()*DIALOG_LINE_HEIGHT+UiGeometry.POPUP_GAP
-                +UiGeometry.POPUP_ROW_HEIGHT+UiGeometry.POPUP_PADDING+(dialogProgress>=0?DIALOG_PROGRESS_HEIGHT:0);
-            return new RectF(960-DIALOG_WIDTH/2,540-h/2,960+DIALOG_WIDTH/2,540+h/2);
+            UiGeometry.dialogRect(dialogLines().size(),dialogProgress>=0,rectScratch);
+            return new RectF(rectScratch[0],rectScratch[1],rectScratch[2],rectScratch[3]);
         }
         private RectF dialogButtonRect(RectF panel,int index){
-            float gap=UiGeometry.POPUP_GAP,width=panel.width()-UiGeometry.POPUP_PADDING*2;
-            if(!dialogButton.isEmpty())width=(width-gap)/2;
-            float x=panel.left+UiGeometry.POPUP_PADDING+index*(width+gap),bottom=panel.bottom-UiGeometry.POPUP_PADDING;
-            return new RectF(x,bottom-UiGeometry.POPUP_ROW_HEIGHT,x+width,bottom);
+            UiGeometry.dialogButtonRect(panel.left,panel.right,panel.bottom,!dialogButton.isEmpty(),index,rectScratch);
+            return new RectF(rectScratch[0],rectScratch[1],rectScratch[2],rectScratch[3]);
         }
         private void drawDialog(Canvas c){
             float q=UiGeometry.clamp(dialogReveal.value,0,1);if(q<.001f)return;
@@ -1305,42 +1303,33 @@ public final class MainActivity extends Activity {
             if(edgeRegion==4)stretchEdge(c,r,.009f);
             c.scale(.94f+.06f*q,.94f+.06f*q,960,540);
             material(c,r.left,r.top,r.width(),r.height(),UiGeometry.POPUP_RADIUS,3);
+            glassMaterials.setLiveRims(false);
             float left=r.left+UiGeometry.POPUP_PADDING,right=r.right-UiGeometry.POPUP_PADDING;
-            configureTextPaint(measurePaint,POPUP_TITLE_SIZE,true);
-            float textLeft=r.left+UiGeometry.POPUP_TITLE_INSET;
-            text(c,dialogTitle,textLeft,r.top+UiGeometry.POPUP_TITLE_INSET-measurePaint.ascent(),
-                POPUP_TITLE_SIZE,fg(),true,Paint.Align.LEFT);
-            float y=r.top+DIALOG_BODY_TOP+22;
-            for(String line:dialogLines()){
-                text(c,line,textLeft,y,POPUP_TEXT_SIZE,fg(),false,Paint.Align.LEFT);
-                y+=DIALOG_LINE_HEIGHT;
-            }
+            menuBitmap(c,dialogContentBitmap(Math.round(r.height())),r.left,r.top,1f);
             if(dialogProgress>=0){
                 float width=right-left,top=r.bottom-UiGeometry.POPUP_PADDING-UiGeometry.POPUP_ROW_HEIGHT-UiGeometry.POPUP_GAP-8f;
                 rect(c,left,top,width,8,4,0x36ffffff);
                 if(shownDialogProgress>0)rect(c,left,top,width*shownDialogProgress/100f,8,4,accent());
             }
             int buttonCount=dialogButton.isEmpty()?1:2;
-            configureTextPaint(measurePaint,POPUP_TEXT_SIZE,false);
-            float buttonBaseline=(UiGeometry.POPUP_ROW_HEIGHT-measurePaint.ascent()-measurePaint.descent())/2f;
+            float pressed=pressStartedInDialog?press.value:0f;
             for(int i=0;i<buttonCount;i++){
                 float selected=UiGeometry.clamp(i==0?1f-dialogChoice.value:dialogChoice.value,0,1);
                 RectF buttonRect=dialogButtonRect(r,i);
-                int button=c.save();
-                float zoom=UiGeometry.popupItemScale(selected,press.value);
-                c.scale(zoom,zoom,buttonRect.centerX(),buttonRect.centerY());
                 float x=buttonRect.left,by=buttonRect.top,w=buttonRect.width(),radius=UiGeometry.POPUP_ROW_RADIUS;
+                float zoom=UiGeometry.popupItemScale(selected,pressed);
+                int button=c.save();
+                c.scale(zoom,zoom,buttonRect.centerX(),buttonRect.centerY());
                 if(i==1&&!destructiveDialog){
                     rect(c,x,by,w,UiGeometry.POPUP_ROW_HEIGHT,radius,0xff0063cc);
                     glassMaterials.drawRim(c,x,by,w,UiGeometry.POPUP_ROW_HEIGHT,radius,1);
-                }else material(c,x,by,w,UiGeometry.POPUP_ROW_HEIGHT,radius,1);
+                }else glassMaterials.drawItem(c,x,by,w,UiGeometry.POPUP_ROW_HEIGHT,radius,1f);
                 int ink=i==1&&destructiveDialog?0xffff494f:fg();
                 String label=i==0?(buttonCount==1?"Đóng":"Hủy"):dialogButton;
-                text(c,fittedText(label,POPUP_TEXT_SIZE,false,w-2*UiGeometry.POPUP_TEXT_PADDING),
-                    buttonRect.centerX(),by+buttonBaseline,POPUP_TEXT_SIZE,ink,false,Paint.Align.CENTER);
+                menuBitmap(c,dialogButtonBitmap(label,Math.round(w),ink),x,by,1f);
                 c.restoreToCount(button);
             }
-            glassMaterials.setLiveRims(false);c.restoreToCount(save);
+            c.restoreToCount(save);
         }
         private int connectionColor(int state){return state==2?accent():state==1?0xffffcd72:0xffb9c0cb;}
         private String connectionLabel(int state){return state==2?"Đã kết nối":state==1?"Chưa kết nối":"Đã tắt";}
@@ -1451,28 +1440,36 @@ public final class MainActivity extends Activity {
             if(m.items.isEmpty()){showToast("Không tìm thấy đầu vào nào");return;}
             showMenu(m);
         }
-        private final SpringValue clockWidth=new SpringValue(0,420,42),clockChange=new SpringValue(1,420,42);
+        private final SpringValue clockWidth=new SpringValue(0,240,31),clockChange=new SpringValue(1,180,26.8f);
         private String shownClock="",previousClock="";
+        private final float[] clockAnim=new float[7];
         private static final float HEADER_BUTTON=54f,HEADER_PAD=8f,HEADER_TOP=UiGeometry.HEADER_TOP,HEADER_HEIGHT=70f,NETWORK_WIDTH=130f;
         private static final float CLOCK_TEXT_PADDING=22.5f,SETTINGS_WIDTH=2f*HEADER_PAD+HEADER_BUTTON;
         private final Rect clockGlyphBounds=new Rect();
         private final Path clockInkPath=new Path();
         private final RectF clockInkBounds=new RectF();
         private final class ClockMetrics {
+            String text="";
             final Rect glyph=new Rect();
             final RectF ink=new RectF();
+            float[] advances=new float[0];
         }
-        private final android.util.LruCache<String,ClockMetrics> clockMetrics=new android.util.LruCache<>(4);
-        private void measureClock(String value){
-            ClockMetrics cached=clockMetrics.get(value);
+        private final android.util.LruCache<String,ClockMetrics> clockMetrics=new android.util.LruCache<>(8);
+        private ClockMetrics measureClock(String value){
+            String norm=normalizedText(value);
+            ClockMetrics cached=clockMetrics.get(norm);
             if(cached==null){
-                cached=new ClockMetrics();configureTextPaint(measurePaint,32,false);
-                measurePaint.getTextBounds(value,0,value.length(),cached.glyph);
-                clockInkPath.reset();measurePaint.getTextPath(value,0,value.length(),0,0,clockInkPath);
+                cached=new ClockMetrics();cached.text=norm;configureTextPaint(measurePaint,32,false);
+                measurePaint.getTextBounds(norm,0,norm.length(),cached.glyph);
+                clockInkPath.reset();measurePaint.getTextPath(norm,0,norm.length(),0,0,clockInkPath);
                 clockInkPath.computeBounds(cached.ink,true);
-                clockMetrics.put(value,cached);
+                int n=norm.length();
+                cached.advances=new float[n+1];
+                for(int i=1;i<=n;i++)cached.advances[i]=measurePaint.measureText(norm,0,i);
+                clockMetrics.put(norm,cached);
             }
             clockGlyphBounds.set(cached.glyph);clockInkBounds.set(cached.ink);
+            return cached;
         }
         private float desiredClockWidth(){
             measureClock(clock());
@@ -1483,6 +1480,129 @@ public final class MainActivity extends Activity {
             measureClock(value);
             float origin=(left+right-clockInkBounds.width())*.5f-clockInkBounds.left;
             text(c,value,origin,100,32,clockInk,false,Paint.Align.LEFT);
+        }
+        private void drawClockRun(Canvas c,String text,int start,int end,float x,float y,float scale,float alpha,float pivotX){
+            if(start>=end||alpha<=.002f)return;
+            configureTextPaint(paint,32,false);
+            paint.setColor(clockInk);
+            paint.setAlpha(Math.round(Color.alpha(clockInk)*UiGeometry.clamp(alpha*textOpacity,0f,1f)));
+            paint.setTextAlign(Paint.Align.LEFT);
+            if(Math.abs(scale-1f)<.001f){
+                c.drawText(text,start,end,x,y,paint);
+            }else{
+                int s=c.save();
+                c.scale(scale,scale,pivotX,y-11f);
+                c.drawText(text,start,end,x,y,paint);
+                c.restoreToCount(s);
+            }
+        }
+        private void drawChangedClockRun(
+                Canvas c,
+                String a,int aStart,int aEnd,float oldOrigin,ClockMetrics oldM,
+                String b,int bStart,int bEnd,float newOrigin,ClockMetrics newM,
+                float[] anim){
+            float posT=anim[0];
+            float oldLeft=oldOrigin+oldM.advances[aStart];
+            float oldW=oldM.advances[aEnd]-oldM.advances[aStart];
+            float newLeft=newOrigin+newM.advances[bStart];
+            float newW=newM.advances[bEnd]-newM.advances[bStart];
+            float center=(oldLeft+oldW*.5f)+((newLeft+newW*.5f)-(oldLeft+oldW*.5f))*posT;
+            if(aEnd>aStart&&anim[3]>.002f){
+                drawClockRun(c,a,aStart,aEnd,center-oldW*.5f,100f+anim[1],anim[2],anim[3],center);
+            }
+            if(bEnd>bStart&&anim[6]>.002f){
+                drawClockRun(c,b,bStart,bEnd,center-newW*.5f,100f+anim[4],anim[5],anim[6],center);
+            }
+        }
+        private void drawClockTransition(Canvas c,String prevRaw,String nextRaw,float left,float right,float progress){
+            if(prevRaw==null||prevRaw.isEmpty()||prevRaw.equals(nextRaw)||progress>=.999f){
+                textOpacity=1f;drawClockTime(c,nextRaw,left,right);return;
+            }
+            if(progress<=.001f){
+                textOpacity=1f;drawClockTime(c,prevRaw,left,right);return;
+            }
+            ClockMetrics oldM=measureClock(prevRaw);
+            float oldOrigin=(left+right-oldM.ink.width())*.5f-oldM.ink.left;
+            ClockMetrics newM=measureClock(nextRaw);
+            float newOrigin=(left+right-newM.ink.width())*.5f-newM.ink.left;
+            String a=oldM.text,b=newM.text;
+            int aLen=a.length(),bLen=b.length();
+            int aTimeEnd=0;while(aTimeEnd<aLen&&a.charAt(aTimeEnd)!=' ')aTimeEnd++;
+            int bTimeEnd=0;while(bTimeEnd<bLen&&b.charAt(bTimeEnd)!=' ')bTimeEnd++;
+            int aDateStart=aTimeEnd;while(aDateStart<aLen&&a.charAt(aDateStart)==' ')aDateStart++;
+            int bDateStart=bTimeEnd;while(bDateStart<bLen&&b.charAt(bDateStart)==' ')bDateStart++;
+            int aDateLen=aLen-aDateStart,bDateLen=bLen-bDateStart;
+            int dPref=0,maxPref=Math.min(aDateLen,bDateLen);
+            while(dPref<maxPref&&a.charAt(aDateStart+dPref)==b.charAt(bDateStart+dPref))dPref++;
+            int dSuf=0,maxSuf=Math.min(aDateLen-dPref,bDateLen-dPref);
+            while(dSuf<maxSuf&&a.charAt(aLen-1-dSuf)==b.charAt(bLen-1-dSuf))dSuf++;
+            int aMidLen=aDateLen-dPref-dSuf,bMidLen=bDateLen-dPref-dSuf;
+            int totalSlots=0;
+            if(aTimeEnd==bTimeEnd){
+                for(int i=0;i<aTimeEnd;i++)if(a.charAt(i)!=b.charAt(i))totalSlots++;
+            }else{
+                totalSlots++;
+            }
+            if(aMidLen>0||bMidLen>0){
+                if(aMidLen==bMidLen&&aMidLen<=4){
+                    for(int k=0;k<aMidLen;k++)if(a.charAt(aDateStart+dPref+k)!=b.charAt(bDateStart+dPref+k))totalSlots++;
+                }else{
+                    totalSlots++;
+                }
+            }
+            totalSlots=Math.max(1,totalSlots);
+            int slot=0;
+            MotionProfile.clockCharTransition(progress,0,totalSlots,20f,clockAnim);
+            float posT=clockAnim[0];
+            textOpacity=1f;
+            if(aTimeEnd==bTimeEnd){
+                for(int i=0;i<aTimeEnd;i++){
+                    if(a.charAt(i)==b.charAt(i)){
+                        int j=i+1;
+                        while(j<aTimeEnd&&a.charAt(j)==b.charAt(j))j++;
+                        float oldX=oldOrigin+oldM.advances[i],newX=newOrigin+newM.advances[i];
+                        drawClockRun(c,b,i,j,oldX+(newX-oldX)*posT,100f,1f,1f,0f);
+                        i=j-1;
+                    }else{
+                        MotionProfile.clockCharTransition(progress,slot++,totalSlots,20f,clockAnim);
+                        drawChangedClockRun(c,a,i,i+1,oldOrigin,oldM,b,i,i+1,newOrigin,newM,clockAnim);
+                    }
+                }
+            }else{
+                MotionProfile.clockCharTransition(progress,slot++,totalSlots,20f,clockAnim);
+                drawChangedClockRun(c,a,0,aTimeEnd,oldOrigin,oldM,b,0,bTimeEnd,newOrigin,newM,clockAnim);
+            }
+            if(aMidLen==0&&bMidLen==0){
+                if(bDateLen>0){
+                    float oldX=oldOrigin+oldM.advances[aDateStart],newX=newOrigin+newM.advances[bDateStart];
+                    drawClockRun(c,b,bDateStart,bLen,oldX+(newX-oldX)*posT,100f,1f,1f,0f);
+                }
+            }else{
+                if(dPref>0){
+                    float oldX=oldOrigin+oldM.advances[aDateStart],newX=newOrigin+newM.advances[bDateStart];
+                    drawClockRun(c,b,bDateStart,bDateStart+dPref,oldX+(newX-oldX)*posT,100f,1f,1f,0f);
+                }
+                if(aMidLen==bMidLen&&aMidLen<=4){
+                    for(int k=0;k<aMidLen;k++){
+                        int ai=aDateStart+dPref+k,bi=bDateStart+dPref+k;
+                        if(a.charAt(ai)==b.charAt(bi)){
+                            float oldX=oldOrigin+oldM.advances[ai],newX=newOrigin+newM.advances[bi];
+                            drawClockRun(c,b,bi,bi+1,oldX+(newX-oldX)*posT,100f,1f,1f,0f);
+                        }else{
+                            MotionProfile.clockCharTransition(progress,slot++,totalSlots,20f,clockAnim);
+                            drawChangedClockRun(c,a,ai,ai+1,oldOrigin,oldM,b,bi,bi+1,newOrigin,newM,clockAnim);
+                        }
+                    }
+                }else{
+                    MotionProfile.clockCharTransition(progress,slot++,totalSlots,20f,clockAnim);
+                    drawChangedClockRun(c,a,aDateStart+dPref,aLen-dSuf,oldOrigin,oldM,b,bDateStart+dPref,bLen-dSuf,newOrigin,newM,clockAnim);
+                }
+                if(dSuf>0){
+                    int ai=aLen-dSuf,bi=bLen-dSuf;
+                    float oldX=oldOrigin+oldM.advances[ai],newX=newOrigin+newM.advances[bi];
+                    drawClockRun(c,b,bi,bLen,oldX+(newX-oldX)*posT,100f,1f,1f,0f);
+                }
+            }
         }
         private float clockPillWidth(){if(clockWidth.value<=0){clockWidth.value=desiredClockWidth();clockWidth.aim(clockWidth.value);shownClock=clock();}return clockWidth.value;}
         private RectF headerRect(int index){
@@ -1495,19 +1615,17 @@ public final class MainActivity extends Activity {
         private Bitmap headerContrastSource;
         private final int networkInk=Color.WHITE,clockInk=Color.WHITE;
         private final int[] controlFocusTint={0xff8c9198,0xff8c9198,0xff8c9198,0xff8c9198};
+        private final int[] controlSamples=new int[5],morphSamples=new int[32];
         private int contrastClockWidth=-1;
         private void updateControlMaterial(Bitmap source,int index){
-            RectF r=headerRect(index);int red=0,green=0,blue=0;
+            RectF r=headerRect(index);
             for(int i=0;i<5;i++){
                 float dx=i==1?-12:i==2?12:0,dy=i==3?-12:i==4?12:0;
                 int x=Math.max(0,Math.min(source.getWidth()-1,Math.round((r.centerX()+dx)*source.getWidth()/1920f)));
                 int y=Math.max(0,Math.min(source.getHeight()-1,Math.round((r.centerY()+dy)*source.getHeight()/1080f)));
-                int color=source.getPixel(x,y);red+=Color.red(color);green+=Color.green(color);blue+=Color.blue(color);
+                controlSamples[i]=source.getPixel(x,y);
             }
-            int rr=Math.min(224,Math.round(red/5f*.48f+228f*.52f));
-            int gg=Math.min(224,Math.round(green/5f*.48f+228f*.52f));
-            int bb=Math.min(224,Math.round(blue/5f*.48f+228f*.52f));
-            controlFocusTint[index]=Color.rgb(rr,gg,bb);
+            controlFocusTint[index]=ArtworkDetector.controlFocusTint(controlSamples);
         }
         private int headerWifiColor(int state,float focus){return connectionColor(state);}
         private void drawHeader(Canvas c,float opacity){
@@ -1521,7 +1639,7 @@ public final class MainActivity extends Activity {
             float right=UiGeometry.DOCK_LEFT+UiGeometry.DOCK_WIDTH,cw=clockPillWidth(),clockLeft=UiGeometry.DOCK_LEFT;
             RectF wifi=headerRect(0);
             Bitmap contrast=wallpapers.full();
-            if(contrast!=null&&(contrast!=headerContrastSource||contrastClockWidth!=Math.round(cw))){
+            if(contrast!=null&&contrast!=headerContrastSource){
                 headerContrastSource=contrast;contrastClockWidth=Math.round(cw);
                 Bitmap local=wallpapers.frost(1)!=null?wallpapers.frost(1):contrast;
                 for(int index:new int[]{0,2,3})updateControlMaterial(local,index);
@@ -1529,9 +1647,9 @@ public final class MainActivity extends Activity {
             stretchHeaderPill(c,wifi.left-HEADER_PAD,NETWORK_WIDTH,edgeHeader==0||edgeHeader==2);
             stretchHeaderPill(c,clockLeft,cw,false);
             stretchHeaderPill(c,right-SETTINGS_WIDTH,SETTINGS_WIDTH,edgeHeader==3);
-            int clockText=c.save();c.clipRect(clockLeft+8f,HEADER_TOP,clockLeft+cw-8f,HEADER_TOP+HEADER_HEIGHT);
-            textOpacity=1-UiGeometry.clamp(clockChange.value,0,1);if(!previousClock.isEmpty())drawClockTime(c,previousClock,clockLeft,clockLeft+cw);
-            textOpacity=UiGeometry.clamp(clockChange.value,0,1);drawClockTime(c,shownClock,clockLeft,clockLeft+cw);textOpacity=1;c.restoreToCount(clockText);
+            int clockText=c.save();c.clipRect(clockLeft+8f,HEADER_TOP+6f,clockLeft+cw-8f,HEADER_TOP+HEADER_HEIGHT-6f);
+            drawClockTransition(c,previousClock,shownClock,clockLeft,clockLeft+cw,UiGeometry.clamp(clockChange.value,0f,1f));
+            textOpacity=1;c.restoreToCount(clockText);
             for(int i:new int[]{0,2,3}){
                 RectF r=headerRect(i);int button=c.save();
                 glassMaterials.setLiveRims(edgeRegion==2 && edgeHeader==i && edgeDeformed());
@@ -1702,6 +1820,7 @@ public final class MainActivity extends Activity {
                     return;
                 }
                 artworkWarmScheduled=false;
+                tileSourcePixels=null;tileMaskedPixels=null;
             }
         };
         void scheduleArtworkWarmup(){
@@ -1726,14 +1845,23 @@ public final class MainActivity extends Activity {
             paint.setColor(((int)(238*reveal)<<24)|0xffffff);c.drawArc(cx-r,cy-r,cx+r,cy+r,-90f,360f*UiGeometry.clamp(tile.installSweep.value,0f,1f),true,paint);
             paint.setStyle(Paint.Style.STROKE);paint.setStrokeWidth(2f*w/252f);paint.setColor(((int)(221*reveal)<<24)|0xffffff);c.drawCircle(cx,cy,r,paint);paint.setStyle(Paint.Style.FILL);
         }
+        private int[] tileSourcePixels,tileMaskedPixels;
         private Bitmap maskArtwork(Bitmap source){
-            Bitmap masked=Bitmap.createBitmap(TILE_BITMAP_W+4,TILE_BITMAP_H+4,Bitmap.Config.ARGB_8888);
+            int mw=TILE_BITMAP_W+4,mh=TILE_BITMAP_H+4;
+            Bitmap masked=Bitmap.createBitmap(mw,mh,Bitmap.Config.ARGB_8888);
             Canvas c=new Canvas(masked);c.translate(2f,2f);
             paint.reset();paint.setAntiAlias(true);paint.setFilterBitmap(true);
             paint.setShader(new BitmapShader(source,Shader.TileMode.CLAMP,Shader.TileMode.CLAMP));
             float sourceRadius=ArtworkTransform.sourceRadius(UiGeometry.TILE_RADIUS,TILE_BITMAP_W,UiGeometry.TILE_MAX_WIDTH);
             drawSquircle(c,0f,0f,TILE_BITMAP_W,TILE_BITMAP_H,sourceRadius,paint);
-            paint.setShader(null);masked.setHasMipMap(true);return masked;
+            paint.setShader(null);
+            if(tileSourcePixels==null)tileSourcePixels=new int[TILE_BITMAP_W*TILE_BITMAP_H];
+            if(tileMaskedPixels==null)tileMaskedPixels=new int[mw*mh];
+            source.getPixels(tileSourcePixels,0,TILE_BITMAP_W,0,0,TILE_BITMAP_W,TILE_BITMAP_H);
+            masked.getPixels(tileMaskedPixels,0,mw,0,0,mw,mh);
+            ArtworkTransform.smoothCorners(tileSourcePixels,tileMaskedPixels,TILE_BITMAP_W,TILE_BITMAP_H,2,sourceRadius,3.05f);
+            masked.setPixels(tileMaskedPixels,0,mw,0,0,mw,mh);
+            masked.setHasMipMap(true);return masked;
         }
         private final android.graphics.ColorFilter[] focusTints=createFocusTints();
         private android.graphics.ColorFilter[] createFocusTints(){
@@ -1917,16 +2045,25 @@ public final class MainActivity extends Activity {
         // hold a bounded force; progressive stiffness resists extension near the limit.
         private final ElasticBoundary edgeElastic=new ElasticBoundary();
         private final ElasticBoundary.Axis edgeX=edgeElastic.x,edgeY=edgeElastic.y;
-        private int edgeKey,edgeRegion,edgeHeader;
+        private int edgeKey,edgeRegion,lastEdgeRegion,edgeHeader;
         private float edgeAnchorX=1f,edgeAnchorY=1f;
         private final ElasticBoundary.Approach edgeApproach=new ElasticBoundary.Approach();
         private boolean edgeWasMoving;
         private Tile edgeTile;
         private boolean edgeDeformed(){return edgeX.busy()||edgeY.busy()||Math.abs(edgeX.value)>.00001f||Math.abs(edgeY.value)>.00001f;}
+        private float stretchScaleX(float strength){return 1f+strength*edgeX.value*edgeAnchorX;}
+        private float stretchScaleY(float strength){return 1f+strength*edgeY.value*edgeAnchorY;}
         private void stretchEdge(Canvas c,RectF r,float strength){
-            float x=edgeX.value*edgeAnchorX,y=edgeY.value*edgeAnchorY;
-            c.scale(1f+strength*x,1f+strength*y,
+            c.scale(stretchScaleX(strength),stretchScaleY(strength),
                 edgeAnchorX<0?r.right:r.left,edgeAnchorY<0?r.bottom:r.top);
+        }
+        private void clearEdgeOnContextSwitch(){
+            if(edgeDeformed()){
+                if(edgeRegion==1||lastEdgeRegion==1)invalidateScene();
+                if((edgeRegion==2||lastEdgeRegion==2)&&headerNode!=null)headerNode.invalidate();
+            }
+            edgeKey=0;edgeX.aim(0f);edgeX.value=0f;edgeX.velocity=0f;
+            edgeY.aim(0f);edgeY.value=0f;edgeY.velocity=0f;edgeWasMoving=false;
         }
         private void stretchHeaderPill(Canvas c,float left,float width,boolean selected){
             int save=c.save();
@@ -1973,14 +2110,16 @@ public final class MainActivity extends Activity {
             String before=navigationState(),beforeSound=focusSoundTarget();
             boolean handled=handleKeyDown(code,event);
             if(before.equals(navigationState())){
+                int nextRegion=dialogAction!=null?4:menu!=null&&menu.selected>=0?3:focusHeader&&page==0?2:1;
+                if(nextRegion!=edgeRegion)clearEdgeOnContextSwitch();
+                lastEdgeRegion=edgeRegion;edgeRegion=nextRegion;
                 edgeKey=code;
-                edgeRegion=dialogAction!=null?4:menu!=null&&menu.selected>=0?3:focusHeader&&page==0?2:1;
                 edgeHeader=headerSelection;
                 edgeTile=edgeRegion==1?focusedTileForEdge():null;
                 float dx=code==KeyEvent.KEYCODE_DPAD_LEFT?-1f:code==KeyEvent.KEYCODE_DPAD_RIGHT?1f:0f;
                 float dy=code==KeyEvent.KEYCODE_DPAD_UP?-1f:code==KeyEvent.KEYCODE_DPAD_DOWN?1f:0f;
-                if(dx!=0f)edgeAnchorX=dx;
-                if(dy!=0f)edgeAnchorY=dy;
+                if(dx!=0f){if(dx!=edgeAnchorX){edgeX.value=0f;edgeX.velocity=0f;}edgeAnchorX=dx;}
+                if(dy!=0f){if(dy!=edgeAnchorY){edgeY.value=0f;edgeY.velocity=0f;}edgeAnchorY=dy;}
                 float incoming=edgeApproach.speed(code,event.getEventTime());
                 edgeX.press(dx,incoming);edgeY.press(dy,incoming);
                 invalidate();
@@ -1993,7 +2132,7 @@ public final class MainActivity extends Activity {
                 if(code==KeyEvent.KEYCODE_DPAD_LEFT||code==KeyEvent.KEYCODE_DPAD_RIGHT){
                     dialogConfirm=code==KeyEvent.KEYCODE_DPAD_RIGHT&&!dialogButton.isEmpty();invalidate();return true;
                 }
-                if(code==KeyEvent.KEYCODE_DPAD_CENTER||code==KeyEvent.KEYCODE_ENTER||code==KeyEvent.KEYCODE_NUMPAD_ENTER){if(event.getRepeatCount()==0){holdingOK=true;press.aim(1f,MotionProfile.PRESS_IN_K,MotionProfile.PRESS_IN_D);}invalidate();return true;}
+                if(code==KeyEvent.KEYCODE_DPAD_CENTER||code==KeyEvent.KEYCODE_ENTER||code==KeyEvent.KEYCODE_NUMPAD_ENTER){if(event.getRepeatCount()==0){holdingOK=true;pressStartedInDialog=true;press.aim(1f,MotionProfile.PRESS_IN_K,MotionProfile.PRESS_IN_D);}invalidate();return true;}
                 return true;
             }
             if(moveMode){
@@ -2110,10 +2249,9 @@ public final class MainActivity extends Activity {
             boolean anchored(){return nearTile||sourceHeader>=0;}
             Tile sourceTile;
             final MenuMotion.Frame motion=new MenuMotion.Frame();
-            Bitmap softSurface,softHeader;final ArrayList<Bitmap> softLabels=new ArrayList<>();
             Bitmap backdrop;RectF backdropArea;long backdropKey=Long.MIN_VALUE;
             final SpringValue frostMix=new SpringValue(1f,420f,38f);
-            Bitmap previousSurface,surface,header;final ArrayList<Bitmap> labels=new ArrayList<>();
+            Bitmap surface,header;final ArrayList<Bitmap> labels=new ArrayList<>();
             Menu(String title,float anchorX,float anchorY){this.title=title;this.left=anchorX;this.top=anchorY;}
             void add(String title,Runnable action){items.add(new Item(title,action));}
         }
@@ -2198,19 +2336,25 @@ public final class MainActivity extends Activity {
             showMenu(m);
         }
         private void closeMenu(){
-            if(menu!=null){closingMenu=menu;menu=null;
+            if(menu!=null){
+                clearEdgeOnContextSwitch();
+                closingMenu=menu;menu=null;
                 menuReveal.aim(0f,closingMenu.anchored()?MenuMotion.CLOSE_K:MotionProfile.MENU_CLOSE_K,closingMenu.anchored()?MenuMotion.CLOSE_D:MotionProfile.MENU_CLOSE_D);
-            menuContent.aim(0f,900f,58f);}
+                menuContent.aim(0f,900f,58f);
+            }
             invalidate();
         }
         private void focusMenuRow(int row){
-            if(menu.selected<0||row<0)settleReturnState(menuSelection,Math.max(row,0));
-            else menuSelection.aim(row);
+            if(row>=0){
+                if(menu.selected<0)settleReturnState(menuSelection,row);
+                else menuSelection.aim(row);
+            }
             menu.selected=row;invalidate();
         }
         private void selectMenuItem(){
             if(menu==null||menu.selected<0)return;
             if(uiSounds!=null)uiSounds.press();
+            clearEdgeOnContextSwitch();
             Item item=menu.items.get(menu.selected);
             closingMenu=menu;menu=null;
             menuReveal.aim(0f,closingMenu.anchored()?MenuMotion.CLOSE_K:MotionProfile.MENU_CLOSE_K,closingMenu.anchored()?MenuMotion.CLOSE_D:MotionProfile.MENU_CLOSE_D);
@@ -2223,22 +2367,28 @@ public final class MainActivity extends Activity {
             return true;
         }
         private void showMenu(Menu m){
+            clearEdgeOnContextSwitch();
             Menu previous=closingMenu;boolean reversing=sameMenu(previous,m);
             if(reversing){
                 if(m.sourceHeader<0)m.selected=Math.min(previous.selected,m.items.size()-1);
                 m.surface=previous.surface;m.header=previous.header;m.labels.addAll(previous.labels);
-                m.softSurface=previous.softSurface;m.softHeader=previous.softHeader;m.softLabels.addAll(previous.softLabels);
                 if(previous.backdrop!=null&&menuRect(previous).equals(menuRect(m))){
                     m.backdrop=previous.backdrop;m.backdropArea=new RectF(previous.backdropArea);m.backdropKey=previous.backdropKey;
                 }
             }else prepareMenu(m);
             closingMenu=null;menu=m;
-            longPressed=holdingOK;pressStartedInMenu=false;press.aim(0f,MotionProfile.PRESS_OUT_K,MotionProfile.PRESS_OUT_D);
+            longPressed=holdingOK;pressStartedInMenu=false;settleReturnState(press,0f);
             m.frostMix.value=1;m.frostMix.velocity=0;m.frostMix.aim(1f);
-            if(reversing&&m.sourceHeader<0)menuSelection.aim(m.selected);
-            else settleReturnState(menuSelection,Math.max(0,m.selected));
+            if(reversing&&m.sourceHeader<0){
+                menuSelection.aim(m.selected);
+                menuRowEmphasis.aim(m.selected>=0?1f:0f);
+            }else{
+                settleReturnState(menuSelection,Math.max(0,m.selected));
+                settleReturnState(menuRowEmphasis,m.selected>=0?1f:0f);
+            }
+            settleReturnState(menuContent,1f);
             menuReveal.aim(1f,m.anchored()?MenuMotion.OPEN_K:MotionProfile.MENU_OPEN_K,m.anchored()?MenuMotion.OPEN_D:MotionProfile.MENU_OPEN_D);
-            menuContent.aim(1f,720f,52f);invalidate();
+            invalidate();
         }
         private void refreshMenuBackdrop(Menu m){
             // The flight crosses the source tile as its press spring releases.
@@ -2261,19 +2411,8 @@ public final class MainActivity extends Activity {
             return UiGeometry.popupHeight(m.items.size());
         }
         private RectF menuRect(Menu m){
-            float h=menuHeight(m);
-            if(m.sourceHeader>=0){
-                float right=UiGeometry.DOCK_LEFT+UiGeometry.DOCK_WIDTH;
-                float left=UiGeometry.clamp(right-MENU_WIDTH,32f,1920f-32f-MENU_WIDTH);
-                float top=HEADER_TOP+HEADER_HEIGHT+14f;
-                return new RectF(left,top,left+MENU_WIDTH,top+h);
-            }
-            if(!m.nearTile)return new RectF((1920-MENU_WIDTH)/2,(1080-h)/2,(1920+MENU_WIDTH)/2,(1080+h)/2);
-            float left=UiGeometry.clamp(m.left-MENU_WIDTH/2,32,1920-32-MENU_WIDTH);
-            float above=m.top-UiGeometry.TILE_MAX_HEIGHT/2-14-h;
-            float below=m.top+UiGeometry.TILE_MAX_HEIGHT/2+14;
-            float top=above>=48?above:below+h<=1032?below:UiGeometry.clamp(m.top-h/2,48,1032-h);
-            return new RectF(left,top,left+MENU_WIDTH,top+h);
+            UiGeometry.menuRect(m.items.size(),m.sourceHeader,m.nearTile,m.left,m.top,rectScratch);
+            return new RectF(rectScratch[0],rectScratch[1],rectScratch[2],rectScratch[3]);
         }
         private MenuMotion.Frame menuMotion(Menu m,RectF target){
             float x=m.left,y=m.top;
@@ -2299,6 +2438,58 @@ public final class MainActivity extends Activity {
             // Eviction only releases cache ownership. A live/closing Menu can
             // still own the same texture, so never recycle it from this cache.
         };
+        private final android.util.LruCache<String,Bitmap> textTextures=new android.util.LruCache<String,Bitmap>(2*1024*1024){
+            @Override protected int sizeOf(String key,Bitmap image){return image.getAllocationByteCount();}
+        };
+        private Bitmap tileLabelBitmap(String label){
+            String key="tile-lbl|"+label;
+            Bitmap cached=textTextures.get(key);if(cached!=null)return cached;
+            Bitmap image=Bitmap.createBitmap(252,36,Bitmap.Config.ARGB_8888);
+            Canvas surface=new Canvas(image);
+            textOpacity=1f;
+            drawFittedText(surface,label,126f,24f,UiGeometry.APP_LABEL_SIZE,fg(),239f);
+            image.prepareToDraw();textTextures.put(key,image);return image;
+        }
+        private Bitmap toastLabelBitmap(String message,int width,int height,float baseline){
+            String key="toast|"+width+"|"+height+"|"+message;
+            Bitmap cached=textTextures.get(key);if(cached!=null)return cached;
+            Bitmap image=Bitmap.createBitmap(width,height,Bitmap.Config.ARGB_8888);
+            Canvas surface=new Canvas(image);
+            textOpacity=1f;
+            drawSettingsText(surface,message,0f,baseline,24,fg(),false,width);
+            image.prepareToDraw();textTextures.put(key,image);return image;
+        }
+        private Bitmap dialogContentBitmap(int height){
+            ArrayList<String> lines=dialogLines();
+            String key="dlg-body|"+height+"|"+dialogTitle+"|"+dialogBody;
+            Bitmap cached=textTextures.get(key);if(cached!=null)return cached;
+            Bitmap image=Bitmap.createBitmap((int)DIALOG_WIDTH,Math.max(1,height),Bitmap.Config.ARGB_8888);
+            Canvas surface=new Canvas(image);
+            textOpacity=1f;
+            configureTextPaint(measurePaint,POPUP_TITLE_SIZE,true);
+            float textLeft=UiGeometry.POPUP_TITLE_INSET;
+            text(surface,dialogTitle,textLeft,UiGeometry.POPUP_TITLE_INSET-measurePaint.ascent(),
+                POPUP_TITLE_SIZE,fg(),true,Paint.Align.LEFT);
+            float y=DIALOG_BODY_TOP+22;
+            for(String line:lines){
+                text(surface,line,textLeft,y,POPUP_TEXT_SIZE,fg(),false,Paint.Align.LEFT);
+                y+=DIALOG_LINE_HEIGHT;
+            }
+            image.prepareToDraw();textTextures.put(key,image);return image;
+        }
+        private Bitmap dialogButtonBitmap(String label,int width,int ink){
+            int w=Math.max(1,width);
+            String key="dlg-btn|"+w+"|"+ink+"|"+label;
+            Bitmap cached=textTextures.get(key);if(cached!=null)return cached;
+            Bitmap image=Bitmap.createBitmap(w,(int)UiGeometry.POPUP_ROW_HEIGHT,Bitmap.Config.ARGB_8888);
+            Canvas surface=new Canvas(image);
+            textOpacity=1f;
+            configureTextPaint(measurePaint,POPUP_TEXT_SIZE,false);
+            float baseline=(UiGeometry.POPUP_ROW_HEIGHT-measurePaint.ascent()-measurePaint.descent())/2f;
+            text(surface,fittedText(label,POPUP_TEXT_SIZE,false,w-2*UiGeometry.POPUP_TEXT_PADDING),
+                w*.5f,baseline,POPUP_TEXT_SIZE,ink,false,Paint.Align.CENTER);
+            image.prepareToDraw();textTextures.put(key,image);return image;
+        }
         private Bitmap menuLabel(String label,float size,boolean bold,int height){
             String key="clear|"+size+"|"+bold+"|"+label;
             Bitmap cached=menuTextures.get(key);if(cached!=null)return cached;
@@ -2321,30 +2512,11 @@ public final class MainActivity extends Activity {
             }
             m.header=menuLabel(m.title,POPUP_TITLE_SIZE,true,(int)MENU_HEADER);
             for(Item item:m.items)m.labels.add(menuLabel(item.title,POPUP_TEXT_SIZE,false,(int)MENU_ROW));
-            if(m.anchored()){
-                m.softSurface=softMenuBitmap("surface:"+m.items.size(),m.surface);
-                m.softHeader=softMenuBitmap("header:"+m.title,m.header);
-                for(int i=0;i<m.labels.size();i++)m.softLabels.add(softMenuBitmap("label:"+m.items.get(i).title,m.labels.get(i)));
-            }
-        }
-        private Bitmap softMenuBitmap(String key,Bitmap source){
-            String cacheKey="soft:"+key;
-            Bitmap cached=menuTextures.get(cacheKey);if(cached!=null)return cached;
-            // Downsample once with alpha intact. Filtered enlargement produces a
-            // soft image on Android 9 without CPU blur or new textures per frame.
-            cached=Bitmap.createScaledBitmap(source,Math.max(1,source.getWidth()/6),Math.max(1,source.getHeight()/6),true);
-            cached.prepareToDraw();menuTextures.put(cacheKey,cached);return cached;
-        }
-        private void menuTransitionBitmap(Canvas c,Bitmap sharp,Bitmap soft,float x,float y,float opacity,float clarity){
-            if(soft!=null&&clarity<.999f){
-                paint.reset();paint.setFilterBitmap(true);paint.setAlpha(Math.round(255f*UiGeometry.clamp(opacity*(1f-clarity),0f,1f)));
-                bounds.set(x,y,x+sharp.getWidth(),y+sharp.getHeight());c.drawBitmap(soft,null,bounds,paint);
-            }
-            if(clarity>.001f)menuBitmap(c,sharp,x,y,opacity*clarity);
         }
         private void menuBitmap(Canvas c,Bitmap bitmap,float x,float y,float opacity){
-            paint.reset();paint.setFilterBitmap(true);paint.setAlpha(Math.round(255f*UiGeometry.clamp(opacity,0f,1f)));
-            c.drawBitmap(bitmap,x,y,paint);
+            paint.reset();paint.setAntiAlias(true);paint.setFilterBitmap(true);paint.setDither(true);
+            paint.setAlpha(Math.round(255f*UiGeometry.clamp(opacity,0f,1f)));
+            bounds.set(x,y,x+bitmap.getWidth(),y+bitmap.getHeight());c.drawBitmap(bitmap,null,bounds,paint);
         }
         private void drawMenu(Canvas c){
             Menu m=menu!=null?menu:closingMenu;if(m==null || m.surface==null)return;
@@ -2352,9 +2524,8 @@ public final class MainActivity extends Activity {
             refreshMenuBackdrop(m);glassMaterials.beginSurface(c);
             RectF target=menuRect(m);
             int transform=c.save();
-            float clarity=1f;
             if(m.anchored()){
-                MenuMotion.Frame f=menuMotion(m,target);clarity=f.clarity;
+                MenuMotion.Frame f=menuMotion(m,target);
                 c.translate(f.x-target.centerX(),f.y-target.centerY());
                 c.scale(f.scaleX,f.scaleY,target.centerX(),target.centerY());
             }
@@ -2364,32 +2535,34 @@ public final class MainActivity extends Activity {
             if(edgeRegion==3)stretchEdge(c,target,.012f);
             glassMaterials.drawBackdrop(c,target.left,target.top+slide,MENU_WIDTH,menuHeight(m),UiGeometry.POPUP_RADIUS,3,0,0,frost);
             c.translate(0,slide);
-            if(glassMaterials.hasLiveRims())glassMaterials.drawDecorationOnly(c,target.left,target.top,MENU_WIDTH,menuHeight(m),UiGeometry.POPUP_RADIUS,3);
-            else menuTransitionBitmap(c,m.surface,m.softSurface,target.left,target.top,1f,clarity);
+            glassMaterials.drawDecorationOnly(c,target.left,target.top,MENU_WIDTH,menuHeight(m),UiGeometry.POPUP_RADIUS,3);
+            glassMaterials.setLiveRims(false);
             float alpha=UiGeometry.clamp(menuContent.value,0f,1f);
             c.translate(0,(1f-alpha)*8f);
-            menuTransitionBitmap(c,m.header,m.softHeader,target.left,target.top,alpha,clarity);
+            menuBitmap(c,m.header,target.left,target.top,alpha);
             float width=MENU_WIDTH-2*MENU_PAD;
+            float pressed=m==menu&&pressStartedInMenu?press.value:0f;
             for(int i=0;i<m.items.size();i++){
                 float x=target.left+MENU_PAD,y=target.top+MENU_HEADER+i*MENU_ROW;
-                float focus=dialogAction==null?menuRowEmphasis.value*Math.max(0f,1f-Math.abs(i-menuSelection.value)):0f;
-                float zoom=UiGeometry.popupItemScale(focus,m==menu?press.value:0f);
+                float focus=(m!=menu||dialogAction==null)?menuRowEmphasis.value*Math.max(0f,1f-Math.abs(i-menuSelection.value)):0f;
+                float focusScale=UiGeometry.popupItemScale(focus,0f);
+                float zoom=UiGeometry.popupItemScale(focus,pressed);
+                float pressScale=focusScale>.001f?zoom/focusScale:1f;
                 float centerY=y+MENU_ITEM_HEIGHT/2f;
                 float highlight=alpha*focus;
-                if(m==menu&&i==m.selected&&highlight>.001f){
+                if(highlight>.001f){
                     int shape=c.save();
                     c.scale(zoom,zoom,target.centerX(),centerY);
-                    int surface=highlight>=.999f?c.save():c.saveLayerAlpha(
-                        x-1,y-1,x+width+1,y+MENU_ITEM_HEIGHT+1,Math.round(255*highlight),Canvas.ALL_SAVE_FLAG);
-                    material(c,x,y,width,MENU_ITEM_HEIGHT,UiGeometry.POPUP_ROW_RADIUS,1);
-                    c.restoreToCount(surface);c.restoreToCount(shape);
+                    glassMaterials.drawItem(c,x,y,width,MENU_ITEM_HEIGHT,UiGeometry.POPUP_ROW_RADIUS,highlight);
+                    c.restoreToCount(shape);
                 }
                 int row=c.save();
-                c.scale(zoom,zoom,x+UiGeometry.POPUP_TEXT_PADDING,centerY);
-                menuTransitionBitmap(c,m.labels.get(i),m.anchored()?m.softLabels.get(i):null,target.left,y,alpha,clarity);
+                c.scale(pressScale,pressScale,target.centerX(),centerY);
+                c.scale(focusScale,focusScale,x+UiGeometry.POPUP_TEXT_PADDING,centerY);
+                menuBitmap(c,m.labels.get(i),target.left,y,alpha);
                 c.restoreToCount(row);
             }
-            glassMaterials.setLiveRims(false);c.restoreToCount(popup);c.restoreToCount(transform);
+            c.restoreToCount(popup);c.restoreToCount(transform);
         }
         boolean queueExternalLaunch(Tile tile,Runnable action){
             if(launchingTile!=null)return true;
@@ -2423,7 +2596,7 @@ public final class MainActivity extends Activity {
         }
         void cancelHeldInput(){
             releaseEdge();
-            holdingOK=false;longPressed=false;pressStartedInMenu=false;
+            holdingOK=false;longPressed=false;pressStartedInMenu=false;pressStartedInDialog=false;
             handler.removeCallbacks(holdAction);
             press.aim(0f,MotionProfile.PRESS_OUT_K,MotionProfile.PRESS_OUT_D);
             tilePress.aim(0f,MotionProfile.PRESS_OUT_K,MotionProfile.PRESS_OUT_D);invalidate();
@@ -2522,9 +2695,9 @@ public final class MainActivity extends Activity {
         private void captureMorphOrigin(Tile tile){
             readTileBounds(tile,morphOrigin);
             if(tile.image!=null&&morphTextureSource!=tile.image){
-                long r=0,g=0,b=0,n=0;Bitmap image=tile.image;
-                for(int y=1;y<5;y++)for(int x=1;x<9;x++){int color=image.getPixel(image.getWidth()*x/9,image.getHeight()*y/5);if(Color.alpha(color)>128){r+=Color.red(color);g+=Color.green(color);b+=Color.blue(color);n++;}}
-                if(n>0)morphFill=Color.rgb((int)(r/n),(int)(g/n),(int)(b/n));
+                Bitmap image=tile.image;int idx=0;
+                for(int y=1;y<5;y++)for(int x=1;x<9;x++)morphSamples[idx++]=image.getPixel(image.getWidth()*x/9,image.getHeight()*y/5);
+                morphFill=ArtworkDetector.dominantFillColor(morphSamples,morphFill);
                 if(morphTextureSource!=image){
                     // Flatten the transparent tile gutter once. The moving surface
                     // is then one opaque texture pass instead of fill + alpha image.
@@ -2536,10 +2709,14 @@ public final class MainActivity extends Activity {
                 }
             }
         }
+        private final float[] morphFrame=new float[12];
         private void drawArtworkMorph(Canvas c,Tile tile,RectF origin,float progress,boolean opening){
-            float p=SurfaceMorph.artworkProgress(progress);
-            morphBounds.set(origin.left*(1-p),origin.top*(1-p),origin.right+(1920-origin.right)*p,origin.bottom+(1080-origin.bottom)*p);
-            float w=morphBounds.width(),h=morphBounds.height(),radius=UiGeometry.TILE_RADIUS*origin.width()/252f*(1-Math.max(0,p));
+            Bitmap image=morphTextureSource==tile.image?morphTexture:tile.image;
+            float imgW=image==null?508f:image.getWidth(),imgH=image==null?288f:image.getHeight();
+            SurfaceMorph.resolveRenderFrame(origin.left,origin.top,origin.right,origin.bottom,progress,opening,morphFill,imgW,imgH,morphFrame);
+            morphBounds.set(morphFrame[0],morphFrame[1],morphFrame[2],morphFrame[3]);
+            float p=morphFrame[4],radius=morphFrame[5],dark=morphFrame[6];
+            float w=morphBounds.width(),h=morphBounds.height();
             if(p<=0f&&tile.image!=null){
                 // Use exactly the native tile's masked pixels, gutter and tint at
                 // handoff and through the rebound. Signed spring displacement
@@ -2549,17 +2726,14 @@ public final class MainActivity extends Activity {
                 paint.setColorFilter(focusTints[Math.round(UiGeometry.clamp(tile.scale.value,0f,1f)*64)]);
                 c.drawBitmap(tile.image,null,bounds,paint);paint.setColorFilter(null);return;
             }
-            float dark=opening?ease(UiGeometry.clamp((p-.4f)/.6f,0,1)):0f;
-            int fill=Color.rgb((int)(Color.red(morphFill)*(1-dark)),(int)(Color.green(morphFill)*(1-dark)),(int)(Color.blue(morphFill)*(1-dark)));
+            int fill=Float.floatToRawIntBits(morphFrame[7]);
             paint.reset();paint.setAntiAlias(true);paint.setColor(fill);
             // HWUI has an analytic round-rect renderer. A changing full-screen
             // polygon otherwise tessellates and uploads a new mask every VSYNC.
-            Bitmap image=morphTextureSource==tile.image?morphTexture:tile.image;
             if(image==null)drawMorphShape(c,radius,p,paint);
             if(image!=null){
                 if(morphBitmap!=image){morphBitmap=image;morphShader=new BitmapShader(image,Shader.TileMode.CLAMP,Shader.TileMode.CLAMP);}
-                float crop=26f*Math.max(0,p),cx=crop*504f/284f;
-                morphCrop.set(2+cx,2+crop,image.getWidth()-2-cx,image.getHeight()-2-crop);
+                morphCrop.set(morphFrame[8],morphFrame[9],morphFrame[10],morphFrame[11]);
                 morphMatrix.setRectToRect(morphCrop,morphBounds,Matrix.ScaleToFit.FILL);
                 morphShader.setLocalMatrix(morphMatrix);paint.reset();paint.setAntiAlias(true);paint.setFilterBitmap(true);paint.setShader(morphShader);
                 if(dark>0){
@@ -2571,27 +2745,13 @@ public final class MainActivity extends Activity {
             }
         }
         private final Path morphPath=new Path();
-        private final float[] morphSin=new float[33],morphCos=new float[33];
-        private final double[] morphBaseSin=new double[33],morphBaseCos=new double[33];
-        {for(int i=0;i<=32;i++){double angle=Math.PI*.5*i/32;morphBaseSin[i]=Math.sin(angle);morphBaseCos[i]=Math.cos(angle);}}
         private void drawMorphShape(Canvas c,float radius,float progress,Paint brush){
             if(progress>=.18f){c.drawRoundRect(morphBounds,radius,radius,brush);return;}
             // Only the small endpoint surface needs a changing path. Keep the
             // inexpensive analytic round-rect for the large part of the motion.
-            double exponent=2.0/SurfaceMorph.artworkCornerExponent(progress);
-            for(int i=0;i<=32;i++){
-                morphSin[i]=(float)Math.pow(morphBaseSin[i],exponent);
-                morphCos[i]=(float)Math.pow(morphBaseCos[i],exponent);
-            }
-            float l=morphBounds.left,t=morphBounds.top,r=morphBounds.right,b=morphBounds.bottom;
-            Path path=morphPath;path.rewind();path.moveTo(l+radius,t);path.lineTo(r-radius,t);
-            for(int i=1;i<=32;i++)path.lineTo(r-radius+radius*morphSin[i],t+radius-radius*morphCos[i]);
-            path.lineTo(r,b-radius);
-            for(int i=1;i<=32;i++)path.lineTo(r-radius+radius*morphCos[i],b-radius+radius*morphSin[i]);
-            path.lineTo(l+radius,b);
-            for(int i=1;i<=32;i++)path.lineTo(l+radius-radius*morphSin[i],b-radius+radius*morphCos[i]);
-            path.lineTo(l,t+radius);
-            for(int i=1;i<=32;i++)path.lineTo(l+radius-radius*morphCos[i],t+radius-radius*morphSin[i]);
+            UiGeometry.squircleVertices(morphBounds.left,morphBounds.top,morphBounds.right,morphBounds.bottom,radius,SurfaceMorph.artworkCornerExponent(progress),squircleVertices);
+            Path path=morphPath;path.rewind();path.moveTo(squircleVertices[0],squircleVertices[1]);
+            for(int i=2;i<266;i+=2)path.lineTo(squircleVertices[i],squircleVertices[i+1]);
             path.close();c.drawPath(path,brush);
         }
         private void drawReturnMorph(Canvas c){
@@ -2606,11 +2766,12 @@ public final class MainActivity extends Activity {
         private void startMove(boolean dock){
             Tile picked=(dock?catalog.dock:catalog.grid).get(dock?dockFocus:gridFocus);
             if(picked.isEmpty())return;
+            clearEdgeOnContextSwitch();
             moveMode=true;moveDock=dock;showToast("Di chuyển để sắp xếp ứng dụng");
             if(page==0){page=1;focusDrawerDock=true;drawer.aim(1f,MotionProfile.DRAWER_OPEN_K,MotionProfile.DRAWER_OPEN_D);}
             press.aim(0f,MotionProfile.PRESS_OUT_K,MotionProfile.PRESS_OUT_D);invalidate();
         }
-        private void stopMove(){moveMode=false;invalidate();}
+        private void stopMove(){clearEdgeOnContextSwitch();moveMode=false;invalidate();}
         private HashMap<String,float[]> visualPositions(boolean dock){
             HashMap<String,float[]> result=new HashMap<>();
             ArrayList<Tile> source=dock?catalog.dock:catalog.grid;
@@ -2702,7 +2863,7 @@ public final class MainActivity extends Activity {
                 }else if(menu!=null&&menuRowAt(menu,x,y)>=0){
                     focusMenuRow(menuRowAt(menu,x,y));
                 }
-                holdingOK=true;longPressed=false;press.aim(1f);
+                holdingOK=true;longPressed=false;pressStartedInDialog=dialogAction!=null;pressStartedInMenu=menu!=null&&menu.selected>=0;press.aim(1f);
                 if(dialogAction==null&&menu==null)handler.postDelayed(holdAction,440);
                 invalidate();return true;
             }

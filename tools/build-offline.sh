@@ -1,5 +1,5 @@
 #!/usr/bin/env bash
-# Dependency-free SDK build for this Java-only application. Gradle remains the primary build.
+# Build the Java app and Rust core with the SDK/NDK without Gradle.
 set -euo pipefail
 cd "$(dirname "$0")/.."
 : "${JAVA_HOME:?Set JAVA_HOME to JDK 17}"
@@ -15,6 +15,7 @@ VERSION_NAME=$(sed -n 's/^versionName=//p' version.properties)
 OUT="$PWD/app/build/offline-$MODE"
 mkdir -p "$OUT/classes" "$OUT/dex" "app/build/outputs/apk/$MODE"
 find "$OUT/classes" "$OUT/dex" -type f -delete
+./tools/build-rust.sh
 "$JAVA_HOME/bin/javac" -encoding UTF-8 -source 17 -target 17 -classpath "$PLATFORM" \
   -d "$OUT/classes" app/src/main/java/dev/pdmv/os/*.java
 "$JAVA_HOME/bin/jar" --create --file "$OUT/classes.jar" -C "$OUT/classes" .
@@ -37,6 +38,8 @@ root=Path(sys.argv[1])
 with zipfile.ZipFile(root/'base.apk','a',zipfile.ZIP_DEFLATED) as apk:
     for dex in sorted((root/'dex').glob('*.dex')):
         apk.write(dex,dex.name)
+    for so in sorted(Path('app/src/main/jniLibs').glob('*/*.so')):
+        apk.write(so,f'lib/{so.parent.name}/{so.name}')
 PY
 "$BT/zipalign" -f 4 "$OUT/base.apk" "$OUT/aligned.apk"
 APK="$PWD/app/build/outputs/apk/$MODE/app-$MODE.apk"
@@ -49,7 +52,7 @@ if [[ "$MODE" == release ]]; then
     [[ "$MIN_SDK" -ge 28 ]] || { echo 'Key migration APK requires Android 9+' >&2;exit 1; }
     lineage_args=(--lineage "$PDMVOS_SIGNING_LINEAGE" --rotation-min-sdk-version 28 --v1-signing-enabled false --v2-signing-enabled false --v3-signing-enabled true)
   fi
-  "$JAVA_HOME/bin/java" -jar "$BT/lib/apksigner.jar" sign "${lineage_args[@]}" --ks "$KEYSTORE" \
+  "$JAVA_HOME/bin/java" -jar "$BT/lib/apksigner.jar" sign ${lineage_args[@]+"${lineage_args[@]}"} --ks "$KEYSTORE" \
     --ks-key-alias pdmvos --ks-pass "file:$PASSFILE" \
     --out "$APK" "$OUT/aligned.apk"
 else

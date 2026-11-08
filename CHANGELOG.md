@@ -1,5 +1,13 @@
 # Changelog
 
+## 4.0.0
+
+- Chuyển toàn bộ nhân tính toán vật lý lò xo, động học chuyển tiếp, hình học bố cục, xử lý ảnh/blur và chính sách miền sang nhân Rust gốc (`pdmvos-core`) qua cầu nối JNI không phụ thuộc ngoài (`NativeCore`), giữ lớp Android/HWUI gọn nhẹ.
+- Khử răng cưa góc bo superellipse của ô ứng dụng bằng trường khoảng cách có dấu (SDF) phân tích và tham số hóa độ dài cung đồng đều.
+- Bổ sung hiệu ứng lăn chữ từng phần cho chữ số giờ và ngày tháng trên pill đồng hồ khi thời gian thay đổi.
+- Đồng bộ viền sáng kính (`GlassMaterial`), độ lún khi nhấn dòng trong menu/dropdown và sự phối hợp liên hoàn giữa các hiệu ứng (menu, dropdown, hộp thoại, ngăn ứng dụng, chế độ sắp xếp).
+- Tối ưu hóa việc cấp phát bộ nhớ trên từng khung hình và tự động giải phóng bộ đệm tùy chọn khi hệ thống thu hồi RAM.
+
 ## 3.1.6
 
 - Nút Apps mở danh sách bằng hiệu ứng trượt lên. Nếu đang trong ứng dụng, pdmvOS hiện Home trước khi mở danh sách.
