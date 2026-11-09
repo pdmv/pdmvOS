@@ -1,5 +1,5 @@
 Solar Icons by 480 Design, CC BY 4.0.
-Original SVG geometry from official @solar-icons/static 2.3.3. The input icon is Screencast 2 Outline; the others use Linear.
+Original SVG geometry from official @solar-icons/static 2.3.3, linear style.
 https://solar-icons.dev/docs/v2/packages/static
 https://github.com/saoudi-h/solar-icons
 https://creativecommons.org/licenses/by/4.0/

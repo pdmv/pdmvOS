@@ -10,7 +10,7 @@ Nguồn [Google Fonts](https://github.com/google/fonts/tree/main/ofl/googlesansf
 
 ## Solar Icons
 
-Solar Icons của 480 Design, gói `@solar-icons/static` 2.3.3, chủ yếu dùng phong cách Linear. Biểu tượng Đầu vào dùng Screencast 2 Outline. Các SVG được chuyển thành Android VectorDrawable, giữ hình học đường nét gốc. Phân phối theo Creative Commons Attribution 4.0 International.
+Solar Icons của 480 Design, gói `@solar-icons/static` 2.3.3, phong cách Linear. Các SVG được chuyển thành Android VectorDrawable, giữ hình học đường nét gốc. Phân phối theo Creative Commons Attribution 4.0 International.
 
 Nguồn [Solar Icons](https://github.com/saoudi-h/solar-icons) và [CC BY 4.0](https://creativecommons.org/licenses/by/4.0/). Bản ghi nguồn kèm tài nguyên nằm tại `app/src/main/assets/solar/CREDITS.txt`.
 

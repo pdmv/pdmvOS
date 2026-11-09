@@ -1,9 +1,5 @@
 # Changelog
 
-## 4.1.1
-
-- Đổi biểu tượng Đầu vào sang Solar Screencast 2 Outline.
-
 ## 4.1.0
 
 - Phát video AirPlay HLS từ YouTube và nguồn HTTPS tương thích, ưu tiên chất lượng AVC cao nhất có thể phát và tự giảm khi mạng yếu.

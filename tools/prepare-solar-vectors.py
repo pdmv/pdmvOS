@@ -19,8 +19,6 @@ for name in ('settings', 'check', 'info', 'move', 'apps', 'wifi', 'input', 'plus
         attrs = dict(pathData=data, fillColor=a.get('fill', svg.get('fill', 'none')),
                      strokeColor=a.get('stroke', 'none'), strokeWidth=a.get('stroke-width', svg.get('stroke-width', '1.5')),
                      strokeLineCap=a.get('stroke-linecap', 'butt'), strokeLineJoin=a.get('stroke-linejoin', 'miter'))
-        if a.get('fill-rule', svg.get('fill-rule')) == 'evenodd':
-            attrs['fillType'] = 'evenOdd'
         for key in ('fillColor', 'strokeColor'):
             attrs[key] = {'none': '#00000000', 'currentColor': '#ffffff'}.get(attrs[key], attrs[key])
         paths.append('<path ' + ' '.join('android:' + k + '=' + quoteattr(v) for k, v in attrs.items()) + ' />')
