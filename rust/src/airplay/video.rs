@@ -1,6 +1,7 @@
 use std::collections::VecDeque;
 use std::sync::{Arc, Mutex};
 
+use bytes::Bytes;
 use shairplay::{PacketKind, VideoHandler, VideoPacket, VideoSession};
 
 use super::{Output, Streams};
@@ -17,7 +18,7 @@ pub(super) struct VideoConfig {
 }
 
 pub(super) struct Frame {
-    pub(super) data: Vec<u8>,
+    pub(super) data: Bytes,
     #[cfg(target_os = "android")]
     pub(super) timestamp: u64,
     #[cfg(target_os = "android")]
@@ -163,6 +164,10 @@ impl Video {
 }
 
 impl VideoHandler for Output {
+    fn supports_hevc(&self) -> bool {
+        self.hevc
+    }
+
     fn video_init(&self) -> Box<dyn VideoSession> {
         let mut streams = self.streams.lock().unwrap();
         let session = streams.video.session.wrapping_add(1);
@@ -232,7 +237,8 @@ impl VideoSession for Mirror {
                     let Some(config) = &video.config else { return };
                     (video.revision, config.length_size, config.hevc)
                 };
-                let Some((data, keyframe)) = access_unit(&packet.payload, length_size, hevc) else {
+                let Some((data, keyframe)) = prepare_access_unit(packet.payload, length_size, hevc)
+                else {
                     return;
                 };
                 let mut streams = self.streams.lock().unwrap();
@@ -329,7 +335,7 @@ fn decoder_config(data: &[u8], hevc: bool) -> Option<VideoConfig> {
     let length_size;
     let mut dimensions = None;
     let csd = if hevc {
-        let record = if data.get(4..8) == Some(b"hvc1") {
+        let record = if matches!(data.get(4..8), Some(b"hvc1" | b"hev1")) {
             let width = i32::from(u16::from_be_bytes(data.get(32..34)?.try_into().ok()?));
             let height = i32::from(u16::from_be_bytes(data.get(34..36)?.try_into().ok()?));
             if width > 0 && height > 0 {
@@ -374,16 +380,49 @@ fn decoder_config(data: &[u8], hevc: bool) -> Option<VideoConfig> {
         })
 }
 
+fn prepare_access_unit(data: Bytes, length_size: usize, hevc: bool) -> Option<(Bytes, bool)> {
+    if length_size != 4 {
+        return access_unit(&data, length_size, hevc).map(|(data, key)| (Bytes::from(data), key));
+    }
+
+    // A four-byte NAL size can be replaced by a start code without moving the payload.
+    let mut data = match data.try_into_mut() {
+        Ok(data) => data,
+        Err(data) => {
+            return access_unit(&data, length_size, hevc)
+                .map(|(data, key)| (Bytes::from(data), key))
+        }
+    };
+    let mut cursor = 0;
+    let mut keyframe = false;
+    while cursor < data.len() {
+        let prefix = data.get_mut(cursor..cursor + 4)?;
+        let size = u32::from_be_bytes(prefix.try_into().ok()?) as usize;
+        prefix.copy_from_slice(&[0, 0, 0, 1]);
+        cursor += 4;
+        if size == 0 || size > data.len() - cursor {
+            return None;
+        }
+        keyframe |= is_keyframe(data[cursor], hevc);
+        cursor += size;
+    }
+    (!data.is_empty()).then(|| (data.freeze(), keyframe))
+}
+
+fn is_keyframe(header: u8, hevc: bool) -> bool {
+    if hevc {
+        (16..=23).contains(&((header >> 1) & 63))
+    } else {
+        header & 31 == 5
+    }
+}
+
 fn access_unit(mut data: &[u8], length_size: usize, hevc: bool) -> Option<(Vec<u8>, bool)> {
     let mut out = Vec::with_capacity(data.len());
     let mut keyframe = false;
     while !data.is_empty() {
         let header = append_nal(&mut out, &mut data, length_size)?;
-        keyframe |= if hevc {
-            (16..=23).contains(&((header >> 1) & 63))
-        } else {
-            header & 31 == 5
-        };
+        keyframe |= is_keyframe(header, hevc);
     }
     (!out.is_empty()).then_some((out, keyframe))
 }
@@ -391,6 +430,17 @@ fn access_unit(mut data: &[u8], length_size: usize, hevc: bool) -> Option<(Vec<u
 #[cfg(test)]
 mod tests {
     use super::*;
+
+    #[test]
+    fn four_byte_nals_reuse_the_network_allocation() {
+        let input = Bytes::from(vec![0, 0, 0, 2, 0x65, 3, 0, 0, 0, 1, 0x61]);
+        let address = input.as_ptr();
+        let (output, keyframe) = prepare_access_unit(input, 4, false).unwrap();
+        assert_eq!(output.as_ptr(), address);
+        assert_eq!(output.as_ref(), &[0, 0, 0, 1, 0x65, 3, 0, 0, 0, 1, 0x61]);
+        assert!(keyframe);
+        assert!(prepare_access_unit(Bytes::from(vec![0, 0, 0, 2, 0x65]), 4, false).is_none());
+    }
 
     #[test]
     fn converts_avc_config_and_keyframe() {
@@ -415,7 +465,7 @@ mod tests {
             ..Video::default()
         };
         let frame = |value| Frame {
-            data: vec![value],
+            data: Bytes::from(vec![value]),
             #[cfg(target_os = "android")]
             timestamp: 0,
             #[cfg(target_os = "android")]
@@ -426,11 +476,11 @@ mod tests {
         for _ in 0..90 {
             video.queue(frame(2), false);
         }
-        assert_eq!(video.pop(0).map(|frame| frame.data), Some(vec![1]));
-        assert_eq!(video.pop(0).map(|frame| frame.data), Some(vec![2]));
+        assert_eq!(video.pop(0).map(|frame| frame.data.to_vec()), Some(vec![1]));
+        assert_eq!(video.pop(0).map(|frame| frame.data.to_vec()), Some(vec![2]));
         video.queue(frame(3), true);
         assert_eq!(video.pop(0).map(|frame| frame.data), None);
-        assert_eq!(video.pop(1).map(|frame| frame.data), Some(vec![3]));
+        assert_eq!(video.pop(1).map(|frame| frame.data.to_vec()), Some(vec![3]));
     }
 
     #[test]
@@ -440,7 +490,7 @@ mod tests {
             ..Video::default()
         };
         let frame = |value| Frame {
-            data: vec![value],
+            data: Bytes::from(vec![value]),
             #[cfg(target_os = "android")]
             timestamp: 0,
             #[cfg(target_os = "android")]
@@ -452,6 +502,6 @@ mod tests {
         assert!(video.pop(0).is_none());
         assert!(video.waiting_since.is_some());
         video.queue(frame(3), true);
-        assert_eq!(video.pop(0).map(|frame| frame.data), Some(vec![3]));
+        assert_eq!(video.pop(0).map(|frame| frame.data.to_vec()), Some(vec![3]));
     }
 }

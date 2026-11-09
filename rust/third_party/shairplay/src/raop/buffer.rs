@@ -481,13 +481,28 @@ impl RaopBuffer {
         1
     }
 
-    /// Dequeue the next frame in sequence order.
-    ///
-    /// Returns the decoded f32 audio samples, or `None` if the buffer is empty.
-    /// If the next frame is missing and `no_resend` is false, returns `None`
-    /// to allow time for a retransmit. If `no_resend` is true (or the buffer
-    /// is full), substitutes silence for the missing frame.
+    /// Return the first missing sequence and the length of the gap, if a
+    /// later packet is already buffered.
+    pub(crate) fn gap(&self) -> Option<(u16, u16)> {
+        let pending = seqnum_cmp(self.last_seqnum, self.first_seqnum);
+        if self.is_empty || pending <= 0 {
+            return None;
+        }
+        let count = (0..=pending as u16)
+            .take_while(|offset| {
+                let seq = self.first_seqnum.wrapping_add(*offset);
+                !self.entries[seq as usize % RAOP_BUFFER_LENGTH].available
+            })
+            .count() as u16;
+        (count > 0).then_some((self.first_seqnum, count))
+    }
+
+    /// Dequeue the next frame, allowing time for a retransmission when supported.
     pub fn dequeue(&mut self, no_resend: bool) -> Option<&[f32]> {
+        self.dequeue_with_gap_policy(!no_resend || matches!(self.codec, Codec::Eld { .. }))
+    }
+
+    pub(crate) fn dequeue_with_gap_policy(&mut self, wait_for_gap: bool) -> Option<&[f32]> {
         let buflen = seqnum_cmp(self.last_seqnum, self.first_seqnum) as i32 + 1;
         if self.is_empty || buflen <= 0 {
             return None;
@@ -495,10 +510,9 @@ impl RaopBuffer {
 
         let idx = self.first_seqnum as usize % RAOP_BUFFER_LENGTH;
         let eld = matches!(self.codec, Codec::Eld { .. });
-        // Mirroring must not stop for the entire 32-packet window on a single gap.
+        // Keep the reorder window short for screen mirroring.
         let reorder_window = if eld { 5 } else { RAOP_BUFFER_LENGTH };
-        if (eld || !no_resend) && !self.entries[idx].available && (buflen as usize) < reorder_window
-        {
+        if wait_for_gap && !self.entries[idx].available && (buflen as usize) < reorder_window {
             return None;
         }
 

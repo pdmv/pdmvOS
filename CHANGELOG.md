@@ -1,5 +1,13 @@
 # Changelog
 
+## 4.1.0
+
+- Phát video AirPlay HLS từ YouTube và nguồn HTTPS tương thích, ưu tiên chất lượng AVC cao nhất có thể phát và tự giảm khi mạng yếu.
+- Phản chiếu HEVC khi TV có bộ giải mã phần cứng phù hợp. Hiện khung AirPlay sau khung hình đầu tiên để tránh nháy đen.
+- Giảm sao chép khung phản chiếu và trạng thái qua JNI, phục hồi tốt hơn khi âm thanh mất gói hoặc HLS bị kẹt.
+- Tối ưu blur và dò chi tiết ảnh ứng dụng trong Rust.
+- Giữ focus trên nút Wi-Fi khi mở menu, đồng bộ với Đầu vào. Thanh tải cập nhật dùng cùng màu xanh với nút hành động.
+
 ## 4.0.5
 
 - Thêm menu Wi-Fi với kết quả quét, mức sóng, trạng thái kết nối và mục Cài đặt hệ thống.

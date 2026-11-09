@@ -2,6 +2,8 @@ package dev.pdmv.os;
 
 import android.content.Context;
 import android.content.SharedPreferences;
+import android.media.MediaCodecInfo;
+import android.media.MediaCodecList;
 import android.net.nsd.NsdManager;
 import android.net.nsd.NsdServiceInfo;
 import android.os.Handler;
@@ -33,13 +35,15 @@ final class AirPlayReceiver {
     static AirPlayReceiver getInstance() { return INSTANCE; }
 
     private final Handler main = new Handler(Looper.getMainLooper());
-    private final int[] status = new int[4];
+    private final int[] status = new int[9];
     private final int[] lastStatus = new int[4];
+    private final AirPlayHlsPlayer hls = new AirPlayHlsPlayer();
     private final Runnable poll = this::pollStatus;
     private NsdManager discovery;
     private final ArrayList<Registration> registrations = new ArrayList<>();
     private int currentMode = MODE_OFF;
     private String receiverName;
+    private Boolean hevcMirroring;
     private Listener listener;
 
     private AirPlayReceiver() {}
@@ -52,10 +56,15 @@ final class AirPlayReceiver {
 
     private void pollStatus() {
         if (currentMode == MODE_OFF) return;
+        boolean wasHls = hls.active();
         NativeCore.airplayStatus(status);
+        if (hls.update(status, currentMode == 1) && !wasHls) {
+            NativeCore.airplaySetSurface(null);
+        }
         main.postDelayed(poll, status[0] == IDLE ? 150 : 32);
-        if (!java.util.Arrays.equals(status, lastStatus)) {
-            System.arraycopy(status, 0, lastStatus, 0, status.length);
+        if (status[0] != lastStatus[0] || status[1] != lastStatus[1]
+            || status[2] != lastStatus[2] || status[3] != lastStatus[3]) {
+            System.arraycopy(status, 0, lastStatus, 0, lastStatus.length);
             if (listener != null) listener.onVideoState(status[0], status[1], status[2], status[3]);
         }
     }
@@ -75,7 +84,7 @@ final class AirPlayReceiver {
         byte[] id = deviceId(context);
         String name = String.format(java.util.Locale.ROOT, "pdmvOS %02X%02X", id[4] & 255, id[5] & 255);
         try {
-            byte[] records = NativeCore.airplayStart(mode, name.getBytes(StandardCharsets.UTF_8), id);
+            byte[] records = NativeCore.airplayStart(mode, name.getBytes(StandardCharsets.UTF_8), id, mode != 2 && supportsHevcMirroring() ? 1 : 0);
             if (records != null) {
                 currentMode = mode;
                 receiverName = name;
@@ -107,6 +116,8 @@ final class AirPlayReceiver {
 
     void stop() {
         main.removeCallbacks(poll);
+        hls.clear();
+        hls.setSurface(null);
         for (Registration registration : registrations) {
             try { discovery.unregisterService(registration); }
             catch (IllegalArgumentException removed) { /* Registration already ended. */ }
@@ -152,7 +163,34 @@ final class AirPlayReceiver {
     }
 
     void setSurface(Surface surface) {
-        NativeCore.airplaySetSurface(surface);
+        hls.setSurface(surface);
+        NativeCore.airplaySetSurface(hls.active() ? null : surface);
+    }
+
+    private boolean supportsHevcMirroring() {
+        if (hevcMirroring == null) {
+            try {
+                hevcMirroring = findHevcDecoder();
+            } catch (RuntimeException error) {
+                Log.w(TAG, "Could not query HEVC decoders", error);
+                hevcMirroring = false;
+            }
+        }
+        return hevcMirroring;
+    }
+
+    private static boolean findHevcDecoder() {
+        for (MediaCodecInfo codec : new MediaCodecList(MediaCodecList.REGULAR_CODECS).getCodecInfos()) {
+            if (codec.isEncoder() || codec.getName().startsWith("OMX.google.")
+                || codec.getName().startsWith("c2.android.")) continue;
+            if (android.os.Build.VERSION.SDK_INT >= 29 && !codec.isHardwareAccelerated()) continue;
+            for (String type : codec.getSupportedTypes()) {
+                if (!type.equalsIgnoreCase("video/hevc")) continue;
+                MediaCodecInfo.VideoCapabilities caps = codec.getCapabilitiesForType(type).getVideoCapabilities();
+                if (caps != null && caps.areSizeAndRateSupported(1920, 1080, 60)) return true;
+            }
+        }
+        return false;
     }
 
     private static byte[] deviceId(Context context) {

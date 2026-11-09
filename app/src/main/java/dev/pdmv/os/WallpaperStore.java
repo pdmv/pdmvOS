@@ -293,7 +293,7 @@ final class WallpaperStore {
             for(int i=0;i<16;i++){
                 check(request);float radius=8f*(i+1)/16;int wanted=(int)radius;
                 while(level<wanted){
-                    System.arraycopy(high,0,low,0,len);
+                    int[] previous=low;low=high;high=previous;
                     ++level;
                     if(level<8){
                         System.arraycopy(sourcePixels,0,high,0,len);

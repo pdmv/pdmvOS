@@ -17,6 +17,7 @@ use std::sync::Arc;
 
 use tokio::net::{TcpListener, UdpSocket};
 use tokio::sync::{Mutex, watch};
+use tokio::time::{Duration, Instant};
 use tracing::info;
 
 use crate::error::{NetworkError, ShairplayError};
@@ -30,6 +31,7 @@ const NO_FLUSH: i32 = -42;
 const CTRL_PAYLOAD_TYPE: u8 = 0x56;
 /// Bytes of retransmit header preceding the original RTP packet in a RESEND.
 const RETRANSMIT_HEADER_LEN: usize = 4;
+const REORDER_WAIT: Duration = Duration::from_millis(25);
 
 /// Determine the bind address for RTP sockets.
 /// Uses the specific local IP for routable addresses (respects BindConfig).
@@ -266,57 +268,83 @@ impl RaopRtp {
 
             let buffer = self.buffer.clone();
             let state = self.state.clone();
-            // If control_rport is 0, the iPhone doesn't support retransmits.
-            let no_resend = control_rport == 0;
-            let _remote_for_task = self.remote.clone();
+            let mut control_addr = remote_sockaddr;
+            control_addr.set_port(control_rport);
 
             tokio::spawn(async move {
                 let mut shutdown_rx = shutdown_rx;
                 let mut data_packet = [0u8; RAOP_PACKET_LEN];
                 let mut ctrl_packet = [0u8; RAOP_PACKET_LEN];
+                let mut resend_seq = 0u16;
+                let mut pending_gap = None;
                 loop {
-                    // Drain flush events only — metadata goes through AudioHandler now.
                     {
                         let mut st = state.lock().await;
                         if st.flush != NO_FLUSH {
                             buffer.lock().await.flush(st.flush);
                             session.audio_flush();
+                            pending_gap = None;
                             st.flush = NO_FLUSH;
                         }
                     }
 
-                    tokio::select! {
-                        // Data channel: audio RTP packets.
-                        result = dsock.recv_from(&mut data_packet) => {
-                            if let Ok((len, _)) = result
-                                && len >= 12 {
-                                    let mut buf = buffer.lock().await;
-                                    buf.queue(&data_packet[..len], true);
-                                    while let Some(samples) = buf.dequeue(no_resend) {
-                                        {
-                                            #[cfg(feature = "resample")]
-                                            if let Some(ref mut rs) = resampler {
-                                                let resampled = rs.process(samples);
-                                                session.audio_process(&resampled);
-                                            } else {
-                                                session.audio_process(samples);
-                                            }
-                                            #[cfg(not(feature = "resample"))]
-                                            session.audio_process(samples);
-                                        }
-                                    }
-                                }
+                    let gap_deadline = async {
+                        match pending_gap {
+                            Some((_, deadline)) => tokio::time::sleep_until(deadline).await,
+                            None => std::future::pending::<()>().await,
                         }
-                        // Control channel: retransmit responses (payload type 0x56).
+                    };
+                    let expired = tokio::select! {
+                        result = dsock.recv_from(&mut data_packet) => {
+                            if let Ok((len, _)) = result {
+                                buffer.lock().await.queue(&data_packet[..len], true);
+                            }
+                            false
+                        }
                         result = csock.recv_from(&mut ctrl_packet) => {
                             if let Ok((len, _)) = result
-                                && len >= 12 && (ctrl_packet[1] & !0x80) == CTRL_PAYLOAD_TYPE {
-                                    let mut buf = buffer.lock().await;
-                                    // Retransmit packets have a 4-byte header before the original RTP.
-                                    if len > RETRANSMIT_HEADER_LEN { buf.queue(&ctrl_packet[RETRANSMIT_HEADER_LEN..len], true); }
-                                }
+                                && len >= RETRANSMIT_HEADER_LEN + 12
+                                && (ctrl_packet[1] & !0x80) == CTRL_PAYLOAD_TYPE
+                            {
+                                buffer.lock().await.queue(&ctrl_packet[RETRANSMIT_HEADER_LEN..len], true);
+                            }
+                            false
                         }
+                        _ = gap_deadline => true,
                         _ = shutdown_rx.changed() => break,
+                    };
+
+                    let mut buf = buffer.lock().await;
+                    let expired = expired || pending_gap.is_some_and(|(_, deadline)| {
+                        deadline <= Instant::now()
+                    });
+                    while let Some(samples) = buf.dequeue_with_gap_policy(!expired) {
+                        #[cfg(feature = "resample")]
+                        if let Some(ref mut rs) = resampler {
+                            let resampled = rs.process(samples);
+                            session.audio_process(&resampled);
+                            continue;
+                        }
+                        session.audio_process(samples);
+                    }
+
+                    let gap = buf.gap();
+                    drop(buf);
+                    match gap {
+                        Some((first, count)) if pending_gap.is_none_or(|(seq, _)| seq != first) => {
+                            pending_gap = Some((first, Instant::now() + REORDER_WAIT));
+                            if control_rport != 0 {
+                                let [request_hi, request_lo] = resend_seq.to_be_bytes();
+                                let [first_hi, first_lo] = first.to_be_bytes();
+                                let [count_hi, count_lo] = count.to_be_bytes();
+                                let packet = [0x80, 0xd5, request_hi, request_lo,
+                                              first_hi, first_lo, count_hi, count_lo];
+                                let _ = csock.send_to(&packet, control_addr).await;
+                                resend_seq = resend_seq.wrapping_add(1);
+                            }
+                        }
+                        None => pending_gap = None,
+                        _ => {}
                     }
                 }
                 // AudioSession dropped here → triggers cleanup in the app.
@@ -441,5 +469,63 @@ impl RaopRtp {
             let _ = tx.send(true);
         }
         self.flush(-1);
+    }
+}
+
+#[cfg(test)]
+mod tests {
+    use super::*;
+    use tokio::sync::mpsc;
+
+    struct Capture(mpsc::UnboundedSender<f32>);
+
+    impl AudioHandler for Capture {
+        fn audio_init(&self, _: AudioFormat) -> Box<dyn crate::raop::AudioSession> {
+            Box::new(Self(self.0.clone()))
+        }
+    }
+
+    impl crate::raop::AudioSession for Capture {
+        fn audio_process(&mut self, samples: &[f32]) {
+            let _ = self.0.send(samples[0]);
+        }
+    }
+
+    #[tokio::test]
+    async fn udp_audio_recovers_when_a_packet_cannot_be_retransmitted() {
+        let sender = UdpSocket::bind("127.0.0.1:0").await.unwrap();
+        let peer = sender.local_addr().unwrap();
+        let (frames, mut playback) = mpsc::unbounded_channel();
+        let mut rtp = RaopRtp::new(
+            Arc::new(Capture(frames)),
+            RtpConfig {
+                remote: peer.ip().to_string(),
+                local_addr: peer.ip(),
+                rtpmap: "96 L16/44100/2".into(),
+                fmtp: None,
+                encryption: None,
+                output_sample_rate: None,
+                remote_socket: peer,
+            },
+        )
+        .unwrap();
+        let (_, _, data_port) = rtp.start(true, peer.port(), 0).unwrap();
+
+        for sequence in [1, 3] {
+            let packet = [0x80, 0x60, 0, sequence, 0, 0, 0, 0, 0, 0, 0, 0, 0x40, 0, 0x40, 0];
+            sender.send_to(&packet, (peer.ip(), data_port)).await.unwrap();
+        }
+        tokio::time::timeout(Duration::from_secs(2), async {
+            let mut request = [0; 8];
+            let size = sender.recv(&mut request).await.unwrap();
+            assert_eq!(size, request.len());
+            assert_eq!(request, [0x80, 0xd5, 0, 0, 0, 2, 0, 1]);
+            assert_eq!(playback.recv().await, Some(0.5));
+            assert_eq!(playback.recv().await, Some(0.0));
+            assert_eq!(playback.recv().await, Some(0.5));
+        })
+        .await
+        .expect("audio should resume even if no resend or later data packet arrives");
+        rtp.stop();
     }
 }

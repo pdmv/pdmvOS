@@ -55,11 +55,27 @@ pub(crate) struct RaopShared {
     #[cfg(feature = "ap2")]
     pub(crate) active_audio: std::sync::Mutex<Option<Box<dyn FnOnce() + Send>>>,
     #[cfg(feature = "hls")]
+    pub(crate) hls: std::sync::Mutex<super::handlers_hls::Receiver>,
+    #[cfg(feature = "hls")]
     pub(crate) hls_handler: Option<Arc<dyn crate::raop::hls::HlsHandler>>,
 }
 
 #[cfg(feature = "ap2")]
 impl RaopShared {
+    pub(crate) fn features(&self) -> u64 {
+        #[allow(unused_mut)]
+        let mut features = crate::net::features::receiver_features_for_pairing(self.pin.is_some());
+        #[cfg(feature = "hls")]
+        if self.hls_handler.is_some() {
+            features |= 0x11;
+        }
+        #[cfg(feature = "video")]
+        if self.video_handler.as_ref().is_some_and(|handler| handler.supports_hevc()) {
+            features |= 1 << 42;
+        }
+        features
+    }
+
     /// Register a newly-started audio session, stopping the previous one so only
     /// the latest connection's playout feeds the audio output.
     pub(crate) fn set_active_audio(&self, stop: Box<dyn FnOnce() + Send>) {
@@ -124,7 +140,9 @@ fn new_raop_connection(
         #[cfg(feature = "video")]
         eiv: None,
         #[cfg(feature = "hls")]
-        hls_state: crate::raop::hls::HlsState::new(),
+        hls_port: local.port(),
+        #[cfg(feature = "hls")]
+        hls_reverse: None,
         shared,
     }
 }
@@ -203,6 +221,11 @@ impl ConnectionHandler for RaopConnectionHandler {
         }
 
         resp
+    }
+
+    #[cfg(feature = "hls")]
+    fn take_reverse(&mut self) -> Option<tokio::sync::mpsc::Receiver<Vec<u8>>> {
+        self.conn.hls_reverse.take()
     }
 
     fn is_encrypted(&self) -> bool {

@@ -234,6 +234,11 @@ pub(crate) trait ConnectionHandler: Send {
 
     /// Called after a response is written. Activates pending encryption.
     fn after_response(&mut self) {}
+
+    #[cfg(feature = "hls")]
+    fn take_reverse(&mut self) -> Option<tokio::sync::mpsc::Receiver<Vec<u8>>> {
+        None
+    }
 }
 
 /// Async TCP server supporting IPv4 and IPv6. Equivalent to httpd_t.
@@ -489,6 +494,23 @@ async fn process_connection<S>(
 
     loop {
         if !send_completed_responses(&mut stream, handler.as_mut(), &mut request, config).await {
+            break;
+        }
+        #[cfg(feature = "hls")]
+        if let Some(mut events) = handler.take_reverse() {
+            // The upgraded connection carries receiver requests and client acknowledgements.
+            loop {
+                tokio::select! {
+                    result = stream.read(&mut buf) => match result {
+                        Ok(n) if n > 0 => (),
+                        _ => break,
+                    },
+                    event = events.recv() => {
+                        let Some(event) = event else { break };
+                        if stream.write_all(&event).await.is_err() { break; }
+                    }
+                }
+            }
             break;
         }
         let read = if let Some(deadline) = request.body_deadline {

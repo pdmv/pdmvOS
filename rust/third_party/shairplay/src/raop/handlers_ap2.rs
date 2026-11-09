@@ -216,13 +216,7 @@ pub(crate) fn handle_info(
         "name".into(),
         plist::Value::String(conn.shared.airplay_name.clone()),
     );
-    dict.insert(
-        "features".into(),
-        plist::Value::Integer(
-            (crate::net::features::receiver_features_for_pairing(conn.shared.pin.is_some()) as i64)
-                .into(),
-        ),
-    );
+    dict.insert("features".into(), plist::Value::Integer(conn.shared.features().into()));
     dict.insert(
         "model".into(),
         plist::Value::String(config::GLOBAL_MODEL.into()),
@@ -303,7 +297,7 @@ pub(crate) fn handle_pair_pin_start(
 /// Build the `updateInfo` `POST /command` message queued on a freshly-opened
 /// event channel (status flags, features, model, versions). Identical for the
 /// RC-only and normal event channels.
-fn build_update_info_message(requires_pin_pairing: bool, already_paired: bool) -> Option<Vec<u8>> {
+fn build_update_info_message(features: u64, requires_pin_pairing: bool, already_paired: bool) -> Option<Vec<u8>> {
     use crate::raop::config;
 
     let mut update_info = plist::Dictionary::new();
@@ -317,10 +311,7 @@ fn build_update_info_message(requires_pin_pairing: bool, already_paired: bool) -
     );
     value.insert(
         "features".into(),
-        plist::Value::Integer(
-            (crate::net::features::receiver_features_for_pairing(requires_pin_pairing) as i64)
-                .into(),
-        ),
+        plist::Value::Integer(features.into()),
     );
     value.insert(
         "model".into(),
@@ -499,6 +490,7 @@ fn setup_initial(conn: &mut RaopConnection, dict: &plist::Dictionary) -> Option<
                     let (tx, rx) = tokio::sync::mpsc::unbounded_channel();
 
                     if let Some(msg) = build_update_info_message(
+                        conn.shared.features(),
                         conn.shared.pin.is_some(),
                         conn.shared.pairing_store.has_any_pairing(),
                     ) {
@@ -552,6 +544,7 @@ fn setup_initial(conn: &mut RaopConnection, dict: &plist::Dictionary) -> Option<
 
             // Queue updateInfo so it's sent immediately when client connects
             if let Some(msg) = build_update_info_message(
+                conn.shared.features(),
                 conn.shared.pin.is_some(),
                 conn.shared.pairing_store.has_any_pairing(),
             ) {

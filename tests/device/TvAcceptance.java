@@ -1230,6 +1230,7 @@ public final class TvAcceptance extends Instrumentation {
         key(23);waitMotion();
         Object menu=state("menu"),controls=main(()->field(activity,"controls"));
         check(menu!=null&&"Wi-Fi".equals(field(menu,"title")),"Wi-Fi tap did not open its menu");
+        check((Integer)field(menu,"selected")==-1,"Wi-Fi must keep focus on its header button when opened");
         List<?> items=(List<?>)field(menu,"items");
         check(((Boolean)field(menu,"radioEnabled")?"Bật":"Tắt").equals(field(items.get(0),"title"))&&"Mở cài đặt".equals(field(items.get(items.size()-1),"title")),"Wi-Fi menu order is incorrect");
         int connected=(Integer)field(controls,"connectedWifiId");
@@ -1240,6 +1241,8 @@ public final class TvAcceptance extends Instrumentation {
             check(found&&!connectedName.isEmpty(),"Connected Wi-Fi name or active network row is missing");
             ActivityMonitor settings=addMonitor(new IntentFilter(android.provider.Settings.ACTION_WIFI_SETTINGS),new ActivityResult(Activity.RESULT_CANCELED,null),true);
             try{
+                key(20);
+                check((Integer)field(menu,"selected")==0,"Down from Wi-Fi header must focus the switch");
                 key(20);key(23);waitMotion();
                 check(settings.getHits()==0&&state("menu")==menu,"Tapping the connected Wi-Fi must keep its connection and menu");
                 key(19);waitMotion();
@@ -1279,7 +1282,7 @@ public final class TvAcceptance extends Instrumentation {
         });
         ActivityMonitor wifiSettings=addMonitor(new IntentFilter(android.provider.Settings.ACTION_WIFI_SETTINGS),new ActivityResult(Activity.RESULT_CANCELED,null),true);
         try{
-            for(int i=0;i<10;i++)key(20);
+            for(int i=0;i<11;i++)key(20);
             waitMotion();
             check((Integer)field(menu,"selected")==10,"Wi-Fi focus did not navigate beyond the first page");
             float offset=(Float)field(field(menu,"scroll"),"value");
@@ -1595,6 +1598,34 @@ public final class TvAcceptance extends Instrumentation {
         main(()->{Method m=store.getClass().getDeclaredMethod("replace",File.class,String.class,java.util.function.Consumer.class);m.setAccessible(true);m.invoke(store,source,hash,(java.util.function.Consumer<String>)(value->{error[0]=value;done.countDown();}));return null;});
         check(done.await(60,java.util.concurrent.TimeUnit.SECONDS),"wallpaper replacement did not complete");return error[0];
     }
+    private void artworkDetail(JSONObject report)throws Exception{
+        main(()->{
+            ClassLoader loader=getTargetContext().getClassLoader();
+            Class<?> nativeCore=Class.forName("dev.pdmv.os.NativeCore",true,loader);
+            Class<?> detector=Class.forName("dev.pdmv.os.ArtworkDetector",true,loader);
+            Class<?> pixelSource=Class.forName("dev.pdmv.os.ArtworkDetector$PixelSource",true,loader);
+            Method nativeDetail=nativeCore.getDeclaredMethod("artworkBitmapDetail",Object.class);
+            nativeDetail.setAccessible(true);
+            Method reference=detector.getMethod("hasDetail",int.class,int.class,pixelSource);
+            Bitmap bitmap=Bitmap.createBitmap(504,284,Bitmap.Config.ARGB_8888);
+            try{
+                Object source=java.lang.reflect.Proxy.newProxyInstance(loader,new Class<?>[]{pixelSource},
+                    (proxy,method,args)->bitmap.getPixel((Integer)args[0],(Integer)args[1]));
+                bitmap.eraseColor(0xff244788);
+                check((Integer)nativeDetail.invoke(null,bitmap)==0,"flat bitmap detected as artwork");
+                android.graphics.Canvas canvas=new android.graphics.Canvas(bitmap);
+                android.graphics.Paint paint=new android.graphics.Paint();
+                paint.setColor(0xfff2c832);
+                for(int x=125;x<375;x+=22)canvas.drawRect(x,85,x+10,200,paint);
+                check((Boolean)reference.invoke(null,504,284,source),"fixture has no visible detail");
+                check((Integer)nativeDetail.invoke(null,bitmap)==1,"native bitmap detail differs from reference");
+                check((Integer)nativeDetail.invoke(null,new Object[]{null})==-1,"invalid bitmap did not request fallback");
+                report.put("native_artwork_detail","PASS");
+                return null;
+            }finally{bitmap.recycle();}
+        });
+    }
+
     private void wallpaperFeatures(JSONObject report)throws Exception{
         Object store=main(()->field(activity,"wallpapers"));
         long until=SystemClock.uptimeMillis()+30000;
@@ -2039,6 +2070,19 @@ public final class TvAcceptance extends Instrumentation {
         report.put("anchored_glass","PASS: capsule and squircle sampling stays aligned during translation and stretch");
     }
     @Override public void onStart(){
+        if("artwork-detail".equals(options.getString("mode"))){
+            Bundle result=new Bundle();
+            JSONObject report=new JSONObject();
+            try{
+                artworkDetail(report);
+                result.putString("report",report.toString());
+                finish(Activity.RESULT_OK,result);
+            }catch(Exception failure){
+                result.putString("error",failure.toString());
+                finish(Activity.RESULT_CANCELED,result);
+            }
+            return;
+        }
         JSONObject report=new JSONObject();Bundle result=new Bundle();HandlerThread metrics=new HandlerThread("tv-frame-metrics");
         SharedPreferences prefs=getTargetContext().getSharedPreferences("pdmvos_settings",0);
         Map<String,?> original=new HashMap<>(prefs.getAll());

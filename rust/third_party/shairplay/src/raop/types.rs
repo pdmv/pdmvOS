@@ -120,6 +120,8 @@ pub trait AudioHandler: Send + Sync + 'static {
 
     /// Volume change in dB (0.0 = max, -144.0 = mute).
     fn on_volume(&self, _volume: f32) {}
+    /// Current receiver volume in dB.
+    fn volume(&self) -> f32 { 0.0 }
     /// Track metadata (parsed from DMAP).
     fn on_metadata(&self, _metadata: &crate::proto::dmap::TrackMetadata) {}
     /// Album artwork (JPEG or PNG).

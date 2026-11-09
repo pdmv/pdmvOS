@@ -282,6 +282,66 @@ pub unsafe extern "system" fn Java_dev_pdmv_os_NativeCore_artworkHasDetailTriple
     }
 }
 
+#[cfg(target_os = "android")]
+#[repr(C)]
+struct AndroidBitmapInfo {
+    width: u32,
+    height: u32,
+    stride: u32,
+    format: i32,
+    flags: u32,
+}
+
+#[cfg(target_os = "android")]
+#[link(name = "jnigraphics")]
+extern "C" {
+    fn AndroidBitmap_getInfo(env: JNIEnv, bitmap: jobject, info: *mut AndroidBitmapInfo) -> i32;
+    fn AndroidBitmap_lockPixels(env: JNIEnv, bitmap: jobject, address: *mut *mut c_void) -> i32;
+    fn AndroidBitmap_unlockPixels(env: JNIEnv, bitmap: jobject) -> i32;
+}
+
+#[cfg(target_os = "android")]
+#[no_mangle]
+pub unsafe extern "system" fn Java_dev_pdmv_os_NativeCore_artworkBitmapDetail(
+    env: JNIEnv,
+    _class: jclass,
+    bitmap: jobject,
+) -> jint {
+    if bitmap.is_null() {
+        return -1;
+    }
+    let mut info = core::mem::MaybeUninit::<AndroidBitmapInfo>::uninit();
+    if AndroidBitmap_getInfo(env, bitmap, info.as_mut_ptr()) != 0 {
+        return -1;
+    }
+    let info = info.assume_init();
+    let stride = info.stride as usize;
+    // RGBA_8888. Contrast sums RGB differences and is invariant to swapping red and blue.
+    if info.format != 1 || u64::from(info.width) * 4 > u64::from(info.stride)
+        || info.width > (i32::MAX / 4) as u32 || info.height > (i32::MAX / 4) as u32
+    {
+        return -1;
+    }
+    let Some(length) = stride.checked_mul(info.height as usize).filter(|&n| n <= isize::MAX as usize) else {
+        return -1;
+    };
+    let mut address = core::ptr::null_mut();
+    if AndroidBitmap_lockPixels(env, bitmap, &mut address) != 0 {
+        return -1;
+    }
+    let result = if address.is_null() {
+        -1
+    } else {
+        let pixels = core::slice::from_raw_parts(address.cast::<u8>(), length);
+        i32::from(crate::artwork::has_detail(info.width as i32, info.height as i32, |x, y| {
+            let offset = y as usize * stride + x as usize * 4;
+            i32::from_le_bytes(pixels[offset..offset + 4].try_into().unwrap())
+        }))
+    };
+    AndroidBitmap_unlockPixels(env, bitmap);
+    result
+}
+
 #[no_mangle]
 pub unsafe extern "system" fn Java_dev_pdmv_os_NativeCore_artworkLayoutFit(
     env: JNIEnv,
@@ -1273,6 +1333,7 @@ pub unsafe extern "system" fn Java_dev_pdmv_os_NativeCore_airplayStart(
     mode: jint,
     server_name: jbyteArray,
     device_id: jbyteArray,
+    hevc: jint,
 ) -> jbyteArray {
     let Ok(name) = String::from_utf8(get_byte_vec(env, server_name)) else {
         return core::ptr::null_mut();
@@ -1280,7 +1341,7 @@ pub unsafe extern "system" fn Java_dev_pdmv_os_NativeCore_airplayStart(
     let Ok(id) = get_byte_vec(env, device_id).try_into() else {
         return core::ptr::null_mut();
     };
-    airplay_bytes(env, crate::airplay::global_start(mode, name, id))
+    airplay_bytes(env, crate::airplay::global_start(mode, name, id, hevc != 0))
 }
 
 #[no_mangle]
@@ -1303,6 +1364,20 @@ pub unsafe extern "system" fn Java_dev_pdmv_os_NativeCore_airplaySetSurface(
     env: JNIEnv, _class: jclass, surface: jobject,
 ) {
     crate::airplay::set_surface(env, surface);
+}
+
+#[no_mangle]
+pub unsafe extern "system" fn Java_dev_pdmv_os_NativeCore_airplayHlsUrl(
+    env: JNIEnv, _class: jclass, session: jint,
+) -> jbyteArray {
+    airplay_bytes(env, crate::airplay::global_hls_url(session))
+}
+
+#[no_mangle]
+pub extern "system" fn Java_dev_pdmv_os_NativeCore_airplayHlsReport(
+    _env: JNIEnv, _class: jclass, id: jint, position: jint, duration: jint, ready: jint, playing: jint,
+) {
+    crate::airplay::global_hls_report(id, position, duration, ready, playing != 0);
 }
 
 unsafe fn airplay_bytes(env: JNIEnv, bytes: Option<Vec<u8>>) -> jbyteArray {

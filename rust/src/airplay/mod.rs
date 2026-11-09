@@ -6,6 +6,7 @@ pub use android::set_surface;
 mod avc;
 #[cfg(any(target_os = "android", test))]
 mod clock;
+mod hls;
 mod video;
 
 use std::collections::VecDeque;
@@ -17,18 +18,40 @@ use shairplay::{AirPlayMode, AudioFormat, AudioHandler, AudioSession, RaopServer
 use tokio::sync::oneshot;
 use video::Video;
 
-#[derive(Default)]
 struct Streams {
     video: Video,
+    hls: hls::Playback,
     audio: VecDeque<u8>,
     audio_active: bool,
     audio_generation: u64,
     audio_volume_db: f32,
+    audio_gain: f32,
+}
+
+impl Default for Streams {
+    fn default() -> Self {
+        Self {
+            video: Video::default(),
+            hls: hls::Playback::default(),
+            audio: VecDeque::new(),
+            audio_active: false,
+            audio_generation: 0,
+            audio_volume_db: 0.0,
+            audio_gain: 1.0,
+        }
+    }
+}
+
+impl Streams {
+    fn rtp_audio_active(&self) -> bool {
+        self.audio_active && !self.hls.owns_audio()
+    }
 }
 
 struct Output {
     streams: Arc<Mutex<Streams>>,
     audio_enabled: bool,
+    hevc: bool,
 }
 
 impl AudioHandler for Output {
@@ -61,8 +84,18 @@ impl AudioHandler for Output {
 
     fn on_volume(&self, volume: f32) {
         if volume.is_finite() {
-            self.streams.lock().unwrap().audio_volume_db = volume.clamp(-144.0, 0.0);
+            let mut streams = self.streams.lock().unwrap();
+            streams.audio_volume_db = volume.clamp(-144.0, 0.0);
+            streams.audio_gain = if volume <= -144.0 {
+                0.0
+            } else {
+                10.0_f32.powf(streams.audio_volume_db / 20.0)
+            };
         }
+    }
+
+    fn volume(&self) -> f32 {
+        self.streams.lock().unwrap().audio_volume_db
     }
 
     fn on_error(&self, error: &ShairplayError) {
@@ -84,16 +117,15 @@ impl AudioSession for Pcm {
         };
         // 250 ms of stereo PCM. Bound latency if Android pauses its audio output.
         const CAPACITY: usize = 44100;
-        let volume_db = {
+        let gain = {
             let streams = self.streams.lock().unwrap();
-            if streams.audio_generation != generation {
+            if streams.audio_generation != generation || !streams.rtp_audio_active() {
                 return;
             }
-            streams.audio_volume_db
+            32768.0 * streams.audio_gain
         };
         let frames = samples.chunks_exact(self.channels);
         let keep = frames.len().min(CAPACITY / 4);
-        let gain = 32768.0 * 10.0_f32.powf(volume_db / 20.0);
         let pcm = |sample: f32| (sample * gain).clamp(-32768.0, 32767.0) as i16;
         self.converted.clear();
         for frame in frames.skip(samples.len() / self.channels - keep) {
@@ -102,7 +134,7 @@ impl AudioSession for Pcm {
                 .extend(pcm(frame[self.channels - 1]).to_le_bytes());
         }
         let mut streams = self.streams.lock().unwrap();
-        if streams.audio_generation == generation {
+        if streams.audio_generation == generation && streams.rtp_audio_active() {
             let discard = (streams.audio.len() + self.converted.len()).saturating_sub(CAPACITY);
             streams.audio.drain(..discard);
             streams.audio.extend(&self.converted);
@@ -155,7 +187,7 @@ fn stop(service: Option<Service>) {
     }
 }
 
-pub fn global_start(mode: i32, name: String, mac: [u8; 6]) -> Option<Vec<u8>> {
+pub fn global_start(mode: i32, name: String, mac: [u8; 6], hevc: bool) -> Option<Vec<u8>> {
     #[cfg(target_os = "android")]
     install_diagnostics();
     let mut service = SERVICE.lock().unwrap();
@@ -170,11 +202,13 @@ pub fn global_start(mode: i32, name: String, mac: [u8; 6]) -> Option<Vec<u8>> {
     let output = Arc::new(Output {
         streams: streams.clone(),
         audio_enabled: mode != 1,
+        hevc,
     });
     #[cfg(target_os = "android")]
     let playing = Arc::new(std::sync::atomic::AtomicBool::new(true));
     #[cfg(target_os = "android")]
     let playing_for_server = playing.clone();
+    let hls_handler = Arc::new(hls::Handler(streams.clone()));
     let (shutdown, shutdown_rx) = oneshot::channel();
     let (ready, ready_rx) = std::sync::mpsc::sync_channel(1);
     let worker = thread::Builder::new()
@@ -192,7 +226,7 @@ pub fn global_start(mode: i32, name: String, mac: [u8; 6]) -> Option<Vec<u8>> {
                     .name(name)
                     .hwaddr(mac)
                     .port(0)
-                    .max_clients(4)
+                    .max_clients(16)
                     .mode(protocol)
                     .output_sample_rate(44100)
                     .output_max_channels(2);
@@ -204,7 +238,9 @@ pub fn global_start(mode: i32, name: String, mac: [u8; 6]) -> Option<Vec<u8>> {
                     ]));
                 }
                 if mode != 2 {
-                    builder = builder.video_handler(output.clone());
+                    builder = builder
+                        .video_handler(output.clone())
+                        .hls_handler(hls_handler);
                 }
                 let mut server = match builder.build(output) {
                     Ok(server) => server,
@@ -318,8 +354,31 @@ fn with_streams<T>(read: impl FnOnce(&mut Streams) -> T) -> Option<T> {
     Some(read(&mut streams))
 }
 
-pub fn global_status() -> [i32; 4] {
-    with_streams(|streams| streams.video.status()).unwrap_or_default()
+pub fn global_status() -> [i32; 9] {
+    with_streams(|streams| {
+        let mut status = [0; 9];
+        let controls = streams.hls.controls(streams.audio_gain);
+        if controls[0] == 0 {
+            status[..4].copy_from_slice(&streams.video.status());
+        }
+        status[4..].copy_from_slice(&controls);
+        status
+    })
+    .unwrap_or_default()
+}
+
+pub fn global_hls_url(session: i32) -> Option<Vec<u8>> {
+    with_streams(|streams| streams.hls.url(session)).flatten()
+}
+
+pub fn global_hls_report(id: i32, position: i32, duration: i32, ready: i32, playing: bool) {
+    with_streams(|streams| {
+        let was_hls = streams.hls.owns_audio();
+        streams.hls.report(id, position, duration, ready, playing);
+        if was_hls != streams.hls.owns_audio() {
+            streams.audio.clear();
+        }
+    });
 }
 
 #[cfg(not(target_os = "android"))]
@@ -369,6 +428,7 @@ fn install_diagnostics() {
                         field.name(),
                         "message"
                             | "method"
+                            | "direct"
                             | "elapsed_ms"
                             | "part"
                             | "error_kind"

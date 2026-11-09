@@ -14,6 +14,7 @@ final class NativeCore {
     static native int artworkFallbackTextColor(int backgroundArgb);
     static native int artworkStep(int width, int height);
     static native boolean artworkHasDetailTriplets(int[] triplets);
+    static native int artworkBitmapDetail(Object bitmap);
     static native int artworkDominantFillColor(int[] samples, int fallback);
     static native int artworkControlFocusTint(int[] samples);
 
@@ -97,8 +98,10 @@ final class NativeCore {
     static native int slotLayoutOp(int op, int arg1, int arg2, int[] dock6, int[] gridBuf, int gridLen);
 
     // AirPlay Receiver native bindings
-    static native byte[] airplayStart(int mode, byte[] serverName, byte[] deviceId);
+    static native byte[] airplayStart(int mode, byte[] serverName, byte[] deviceId, int hevc);
     static native void airplayStop();
     static native void airplayStatus(int[] result);
+    static native byte[] airplayHlsUrl(int session);
+    static native void airplayHlsReport(int id, int position, int duration, int ready, int playing);
     static native void airplaySetSurface(Object surface);
 }

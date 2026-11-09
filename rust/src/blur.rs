@@ -18,6 +18,7 @@ pub fn apply(pixels: &mut [i32], scratch: &mut [i32], width: usize, height: usiz
     let h_i32 = height as isize;
     let r_i32 = radius as isize;
 
+    let mut columns = vec![[0_usize; 3]; width];
     for _pass in 0..3 {
         for y in 0..height {
             let mut red: usize = 0;
@@ -44,38 +45,42 @@ pub fn apply(pixels: &mut [i32], scratch: &mut [i32], width: usize, height: usiz
                 };
                 let before = pixels[row + before_x] as u32;
                 let next = pixels[row + next_x] as u32;
-                red = (red as isize + ((next >> 16) & 255) as isize - ((before >> 16) & 255) as isize) as usize;
-                green = (green as isize + ((next >> 8) & 255) as isize - ((before >> 8) & 255) as isize) as usize;
+                red = (red as isize + ((next >> 16) & 255) as isize
+                    - ((before >> 16) & 255) as isize) as usize;
+                green = (green as isize + ((next >> 8) & 255) as isize
+                    - ((before >> 8) & 255) as isize) as usize;
                 blue = (blue as isize + (next & 255) as isize - (before & 255) as isize) as usize;
             }
         }
-        for x in 0..width {
-            let mut red: usize = 0;
-            let mut green: usize = 0;
-            let mut blue: usize = 0;
-            for i in -r_i32..=r_i32 {
-                let clamped = i.max(0).min(h_i32 - 1) as usize;
-                let color = scratch[clamped * width + x] as u32;
-                red += ((color >> 16) & 255) as usize;
-                green += ((color >> 8) & 255) as usize;
-                blue += (color & 255) as usize;
+        // Walk complete rows so both source rows and the output stay contiguous.
+        columns.fill([0; 3]);
+        for i in -r_i32..=r_i32 {
+            let row = i.max(0).min(h_i32 - 1) as usize * width;
+            for (sum, &color) in columns.iter_mut().zip(&scratch[row..row + width]) {
+                sum[0] += ((color >> 16) & 255) as usize;
+                sum[1] += ((color >> 8) & 255) as usize;
+                sum[2] += (color & 255) as usize;
             }
-            for y in 0..height {
-                pixels[y * width + x] = (0xff00_0000u32 as i32)
-                    | (divided[red] << 16)
-                    | (divided[green] << 8)
-                    | divided[blue];
-                let before_y = if y > radius { y - radius } else { 0 };
-                let next_y = if y + radius + 1 < height {
-                    y + radius + 1
-                } else {
-                    height - 1
-                };
-                let before = scratch[before_y * width + x] as u32;
-                let next = scratch[next_y * width + x] as u32;
-                red = (red as isize + ((next >> 16) & 255) as isize - ((before >> 16) & 255) as isize) as usize;
-                green = (green as isize + ((next >> 8) & 255) as isize - ((before >> 8) & 255) as isize) as usize;
-                blue = (blue as isize + (next & 255) as isize - (before & 255) as isize) as usize;
+        }
+        for y in 0..height {
+            let row = y * width;
+            let before = y.saturating_sub(radius) * width;
+            let next = (y + radius + 1).min(height - 1) * width;
+            let entering = &scratch[next..next + width];
+            let leaving = &scratch[before..before + width];
+            for (((pixel, sum), &add), &remove) in pixels[row..row + width]
+                .iter_mut()
+                .zip(&mut columns)
+                .zip(entering)
+                .zip(leaving)
+            {
+                *pixel = (0xff00_0000u32 as i32)
+                    | (divided[sum[0]] << 16)
+                    | (divided[sum[1]] << 8)
+                    | divided[sum[2]];
+                sum[0] = sum[0] + ((add >> 16) & 255) as usize - ((remove >> 16) & 255) as usize;
+                sum[1] = sum[1] + ((add >> 8) & 255) as usize - ((remove >> 8) & 255) as usize;
+                sum[2] = sum[2] + (add & 255) as usize - (remove & 255) as usize;
             }
         }
     }

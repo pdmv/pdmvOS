@@ -38,7 +38,7 @@ fn parse_header(header: &[u8; VIDEO_HEADER_LEN]) -> VideoHeader {
 
 fn classify_packet(packet_type: u16, payload: &[u8]) -> PacketKind {
     match packet_type {
-        1 if payload.len() >= 8 && &payload[4..8] == b"hvc1" => PacketKind::HvcC,
+        1 if matches!(payload.get(4..8), Some(b"hvc1" | b"hev1")) => PacketKind::HvcC,
         1 => PacketKind::AvcC,
         0 | 4096 => PacketKind::Payload,
         5 => PacketKind::Plist,

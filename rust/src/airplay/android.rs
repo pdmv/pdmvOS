@@ -447,7 +447,7 @@ impl AudioPlayback {
         if self.audio(streams) {
             return Duration::ZERO;
         }
-        let active = streams.lock().unwrap().audio_active;
+        let active = streams.lock().unwrap().rtp_audio_active();
         Duration::from_millis(if active { 3 } else { 30 })
     }
 
@@ -457,7 +457,7 @@ impl AudioPlayback {
         let mut previous = None;
         {
             let mut streams = streams.lock().unwrap();
-            if self.audio_generation != streams.audio_generation || !streams.audio_active {
+            if self.audio_generation != streams.audio_generation || !streams.rtp_audio_active() {
                 previous = self.audio.take();
                 self.pending.clear();
                 self.offset = 0;

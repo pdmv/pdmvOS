@@ -382,6 +382,8 @@ impl RaopServerBuilder {
             #[cfg(feature = "ap2")]
             active_audio: std::sync::Mutex::new(None),
             #[cfg(feature = "hls")]
+            hls: Default::default(),
+            #[cfg(feature = "hls")]
             hls_handler: self.hls_handler,
         });
 
@@ -494,7 +496,7 @@ impl RaopServer {
                     crate::crypto::pairing_homekit::identity_keypair(&self.shared.identity_seed);
                 let pk_hex: String = vk.as_bytes().iter().map(|b| format!("{b:02x}")).collect();
                 let pi = self.shared.pairing_id.clone();
-                return AirPlayServiceInfo::new_airplay2(
+                let mut info = AirPlayServiceInfo::new_airplay2(
                     &self.name,
                     self.httpd.port(),
                     &self.hwaddr,
@@ -504,6 +506,14 @@ impl RaopServer {
                     self.shared.pin.is_some(),
                     self.shared.pairing_store.has_any_pairing(),
                 );
+                let features = self.shared.features();
+                let advertised = format!("0x{:X},0x{:X}", features as u32, features >> 32);
+                for (records, feature_key) in [(&mut info.airplay_txt, "features"), (&mut info.raop_txt, "ft")] {
+                    if let Some((_, value)) = records.iter_mut().find(|(key, _)| key == feature_key) {
+                        value.clone_from(&advertised);
+                    }
+                }
+                return info;
             }
         }
         AirPlayServiceInfo::new_with_ap1_advertisement(

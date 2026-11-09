@@ -59,7 +59,9 @@ pub(crate) struct RaopConnection {
     #[cfg(feature = "video")]
     pub(crate) eiv: Option<[u8; 16]>,
     #[cfg(feature = "hls")]
-    pub(crate) hls_state: std::sync::Arc<std::sync::Mutex<crate::raop::hls::HlsState>>,
+    pub(crate) hls_port: u16,
+    #[cfg(feature = "hls")]
+    pub(crate) hls_reverse: Option<tokio::sync::mpsc::Receiver<Vec<u8>>>,
 }
 
 /// Returns the connection's local IP address.
@@ -432,7 +434,7 @@ pub(crate) fn handle_record(
 
 /// RTSP GET_PARAMETER: return volume or other parameters.
 pub(crate) fn handle_get_parameter(
-    _conn: &mut RaopConnection,
+    conn: &mut RaopConnection,
     request: &HttpRequest,
     response: &mut HttpResponse,
 ) -> Option<Vec<u8>> {
@@ -443,9 +445,9 @@ pub(crate) fn handle_get_parameter(
 
     let data = request.data()?;
     let text = std::str::from_utf8(data).ok()?;
-    if text.contains("volume") {
+    if text.lines().any(|line| line.trim().eq_ignore_ascii_case("volume")) {
         response.add_header("Content-Type", "text/parameters");
-        return Some(b"volume: 0.000000\r\n".to_vec());
+        return Some(format!("volume: {:.6}\r\n", conn.shared.handler.volume()).into_bytes());
     }
     None
 }

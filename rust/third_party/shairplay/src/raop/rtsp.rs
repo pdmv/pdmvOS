@@ -185,43 +185,6 @@ const ROUTES: &[Route] = &[
         path: "/info",
         handler: handlers_ap2::handle_info,
     },
-    // --- HLS (HTTP Live Streaming) ---
-    #[cfg(feature = "hls")]
-    Route {
-        method: "GET",
-        path: "/server-info",
-        handler: handlers_hls::handle_server_info,
-    },
-    #[cfg(feature = "hls")]
-    Route {
-        method: "POST",
-        path: "/play",
-        handler: handlers_hls::handle_play,
-    },
-    #[cfg(feature = "hls")]
-    Route {
-        method: "GET",
-        path: "/playback-info",
-        handler: handlers_hls::handle_playback_info,
-    },
-    #[cfg(feature = "hls")]
-    Route {
-        method: "POST",
-        path: "/stop",
-        handler: handlers_hls::handle_stop,
-    },
-    #[cfg(feature = "hls")]
-    Route {
-        method: "POST",
-        path: "/scrub",
-        handler: handlers_hls::handle_scrub,
-    },
-    #[cfg(feature = "hls")]
-    Route {
-        method: "POST",
-        path: "/rate",
-        handler: handlers_hls::handle_rate,
-    },
 ];
 
 /// Dispatch an RTSP request: authenticate, resolve route, call handler, build response.
@@ -253,6 +216,13 @@ pub(crate) fn dispatch(conn: &mut RaopConnection, request: &HttpRequest) -> Http
             response.finish(None);
             return response;
         }
+    }
+
+    #[cfg(feature = "hls")]
+    if conn.shared.hls_handler.is_some()
+        && let Some(response) = handlers_hls::dispatch(conn, request, method, url)
+    {
+        return response;
     }
 
     // --- Middleware: Apple-Challenge ---

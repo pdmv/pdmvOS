@@ -575,6 +575,7 @@ public final class MainActivity extends Activity {
         private int secondary(){return 0xffd4d9e1;}
         private int row(){return 0x24ffffff;}
         private int stroke(){return 0x50ffffff;}
+        private static final int DIALOG_ACTION_BLUE=0xff0063cc;
         private int accent(){return 0xff70b8ff;}
         private final GlassMaterial glassMaterials=new GlassMaterial(wallpapers,(canvas,x,y,w,h,r,p)->drawSquircle(canvas,x,y,w,h,r,p),(w,h,r)->{
             if(r>=Math.min(w,h)/2f){Path path=new Path();path.addRoundRect(0,0,w,h,r,r,Path.Direction.CW);return path;}
@@ -1031,10 +1032,11 @@ public final class MainActivity extends Activity {
                 handler.removeCallbacks(airPlayEntranceFallback);
                 airPlayEntrance.aim(1f);
                 showToast("AirPlay · Nhấn Back để dừng");
+                updateAirPlayTransform();
                 airPlayMatte.setVisibility(View.VISIBLE);
                 airPlaySurface.setTranslationX(0f);
             }
-            if(airPlayFrameVisible)updateAirPlayTransform();
+            else if(airPlayFrameVisible)updateAirPlayTransform();
             syncTileNodes();syncHeader();openRequestedApps();
         }
         @Override protected Rect overlayViewport(){
@@ -1458,7 +1460,7 @@ public final class MainActivity extends Activity {
             if(dialogProgress>=0){
                 float width=right-left,top=r.bottom-UiGeometry.POPUP_PADDING-UiGeometry.POPUP_ROW_HEIGHT-UiGeometry.POPUP_GAP-8f;
                 rect(c,left,top,width,8,4,0x36ffffff);
-                if(shownDialogProgress>0)rect(c,left,top,width*shownDialogProgress/100f,8,4,accent());
+                if(shownDialogProgress>0)rect(c,left,top,width*shownDialogProgress/100f,8,4,DIALOG_ACTION_BLUE);
             }
             int buttonCount=dialogButton.isEmpty()?1:2;
             float pressed=pressStartedInDialog?press.value:0f;
@@ -1470,7 +1472,7 @@ public final class MainActivity extends Activity {
                 int button=c.save();
                 c.scale(zoom,zoom,buttonRect.centerX(),buttonRect.centerY());
                 if(i==1&&!destructiveDialog){
-                    rect(c,x,by,w,UiGeometry.POPUP_ROW_HEIGHT,radius,0xff0063cc);
+                    rect(c,x,by,w,UiGeometry.POPUP_ROW_HEIGHT,radius,DIALOG_ACTION_BLUE);
                     glassMaterials.drawRim(c,x,by,w,UiGeometry.POPUP_ROW_HEIGHT,radius,1);
                 }else glassMaterials.drawItem(c,x,by,w,UiGeometry.POPUP_ROW_HEIGHT,radius,1f);
                 int ink=i==1&&destructiveDialog?0xffff494f:fg();
@@ -1614,7 +1616,7 @@ public final class MainActivity extends Activity {
             controls.refresh();
             RectF button=headerRect(0);
             Menu m=new Menu("Wi-Fi",button.centerX(),button.centerY());
-            m.sourceHeader=0;
+            m.sourceHeader=0;m.selected=-1;
             settleReturnState(m.switchState,controls.wifi!=0?1f:0f);
             m.radioEnabled=controls.wifi!=0;
             settleReturnState(m.wifiBusy,controls.wifiTogglePending?1f:0f);
@@ -1776,7 +1778,7 @@ public final class MainActivity extends Activity {
             }else{
                 closeAirPlayDisplay();
                 if(state==AirPlayReceiver.FAILED){
-                    AirPlayReceiver.getInstance().disconnect(MainActivity.this);
+                    if(session>=0)AirPlayReceiver.getInstance().disconnect(MainActivity.this);
                     showToast("AirPlay · Không nhận được hình");
                 }
             }
@@ -1796,6 +1798,7 @@ public final class MainActivity extends Activity {
                 airPlayMatte.setVisibility(View.GONE);
                 addView(airPlayMatte,new ViewGroup.LayoutParams(ViewGroup.LayoutParams.MATCH_PARENT,ViewGroup.LayoutParams.MATCH_PARENT));
                 airPlaySurface=new AirPlaySurface();
+                airPlaySurface.setVisibility(View.GONE);
                 airPlaySurface.getHolder().addCallback(new SurfaceHolder.Callback(){
                     @Override public void surfaceCreated(SurfaceHolder holder){
                         if(airPlayDisplayVisible)AirPlayReceiver.getInstance().setSurface(holder.getSurface());
@@ -1897,7 +1900,9 @@ public final class MainActivity extends Activity {
                 if(rounded)invalidate();
             }
             @Override public void draw(Canvas canvas){
-                if(cornerRadius<=0f||!airPlayFrameVisible||!getHolder().getSurface().isValid()){
+                // Keep the launcher opaque while the surface waits for its first frame.
+                if(!airPlayFrameVisible||!getHolder().getSurface().isValid())return;
+                if(cornerRadius<=0f){
                     super.draw(canvas);
                     return;
                 }
@@ -2253,7 +2258,8 @@ public final class MainActivity extends Activity {
          * banner background for a successful logo. Based on light/color contrast against
          * the four outside corners; intentionally conservative to show a text fallback. */
         private boolean hasVisibleCentralArtwork(Bitmap bitmap){
-            return ArtworkDetector.hasDetail(bitmap.getWidth(),bitmap.getHeight(),bitmap::getPixel);
+            int detail=NativeCore.artworkBitmapDetail(bitmap);
+            return detail>=0?detail!=0:ArtworkDetector.hasDetail(bitmap.getWidth(),bitmap.getHeight(),bitmap::getPixel);
         }
         private void drawArtworkLabelFallback(Canvas canvas,Bitmap image,String title){
             Paint label=new Paint(Paint.ANTI_ALIAS_FLAG|Paint.SUBPIXEL_TEXT_FLAG);

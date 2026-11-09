@@ -10,7 +10,8 @@ name = "pdmvos_core"
 crate-type = ["cdylib", "rlib"]
 
 [dependencies]
-shairplay = { version = "=0.13.0", default-features = false, features = ["video"] }
+bytes = "1"
+shairplay = { version = "=0.13.0", default-features = false, features = ["hls"] }
 tokio = { version = "1", features = ["rt-multi-thread", "sync", "time"] }
 tracing = "0.1"
 

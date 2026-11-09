@@ -34,6 +34,9 @@ pub struct VideoPacket {
 
 /// Factory for creating video sessions. Implement this to receive video data.
 pub trait VideoHandler: Send + Sync + 'static {
+    /// Whether the receiver can decode HEVC mirroring.
+    fn supports_hevc(&self) -> bool { false }
+
     /// Called when a new video stream is established.
     fn video_init(&self) -> Box<dyn VideoSession>;
 }

@@ -41,8 +41,10 @@ pub fn has_detail<F: Fn(i32, i32) -> i32>(width: i32, height: i32, source: F) ->
     let Some((left, right, top, bottom, step)) = sample_bounds(width, height) else {
         return false;
     };
+    let columns = (right - left - 1) / step;
+    let rows = (bottom - top - 1) / step;
+    let required = 3.max(i64::from(columns) * i64::from(rows) / 100);
     let mut edges = 0;
-    let mut visited = 0;
     let mut y = top;
     while y + step < bottom {
         let mut x = left;
@@ -52,13 +54,15 @@ pub fn has_detail<F: Fn(i32, i32) -> i32>(width: i32, height: i32, source: F) ->
                 || contrast(here, source(x, y + step)) > 88
             {
                 edges += 1;
+                if edges >= required {
+                    return true;
+                }
             }
-            visited += 1;
             x += step;
         }
         y += step;
     }
-    edges >= 3.max(visited / 100)
+    false
 }
 
 /// Evaluates flattened `(here, right, down)` triplets collected along the sample grid.
