@@ -1,5 +1,11 @@
 # Changelog
 
+## 4.1.2
+
+- Sửa lỗi livestream AirPlay đứng khi thiết bị gửi yêu cầu tua một luồng không hỗ trợ tua.
+- Cập nhật danh sách phân đoạn trong lúc phát livestream qua AirPlay.
+- Dừng đúng phiên video khi ứng dụng gửi lệnh dừng, gỡ video khỏi danh sách phát hoặc đóng kênh điều khiển AirPlay.
+
 ## 4.1.0
 
 - Phát video AirPlay HLS từ YouTube và nguồn HTTPS tương thích, ưu tiên chất lượng AVC cao nhất có thể phát và tự giảm khi mạng yếu.

@@ -181,6 +181,10 @@ struct RaopConnectionHandler {
 
 impl Drop for RaopConnectionHandler {
     fn drop(&mut self) {
+        #[cfg(feature = "hls")]
+        if let Ok(mut hls) = self.conn.shared.hls.lock() {
+            hls.connection_closed(self.conn.remote_socket.ip(), &self.conn.nonce);
+        }
         self.conn.stop_streams(None);
         self.conn
             .shared

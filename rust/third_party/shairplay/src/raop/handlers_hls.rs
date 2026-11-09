@@ -18,14 +18,34 @@ const MAX_SESSION_PLAYLIST_BYTES: usize = 32 * 1024 * 1024;
 
 #[derive(Default)]
 pub(crate) struct Receiver {
-    reverse: HashMap<IpAddr, mpsc::Sender<Vec<u8>>>,
+    reverse: HashMap<(IpAddr, String), Reverse>,
     active: Option<Playback>,
     request_id: u64,
+}
+
+#[derive(Clone)]
+struct Reverse {
+    connection: String,
+    sender: mpsc::Sender<Vec<u8>>,
+}
+
+impl Receiver {
+    pub(crate) fn connection_closed(&mut self, peer: IpAddr, connection: &str) {
+        self.reverse
+            .retain(|(ip, _), channel| *ip != peer || channel.connection != connection);
+        if self.active.as_ref().is_some_and(|play| {
+            play.peer == peer && play.reverse_connection.as_deref() == Some(connection)
+        }) {
+            tracing::info!("AirPlay video stopped when its reverse channel closed");
+            self.active = None;
+        }
+    }
 }
 
 struct Playback {
     peer: IpAddr,
     session_id: String,
+    reverse_connection: Option<String>,
     uuid: Option<String>,
     prefer_high_quality: bool,
     start: f32,
@@ -41,6 +61,20 @@ struct Playback {
 }
 
 impl Playback {
+    fn matches_session(&self, peer: IpAddr, session_id: &str) -> bool {
+        self.peer == peer && (session_id.is_empty() || session_id == self.session_id)
+    }
+
+    fn reverse_sender<'a>(
+        &self,
+        channels: &'a HashMap<(IpAddr, String), Reverse>,
+    ) -> Option<&'a mpsc::Sender<Vec<u8>>> {
+        channels
+            .values()
+            .find(|channel| self.reverse_connection.as_deref() == Some(channel.connection.as_str()))
+            .map(|channel| &channel.sender)
+    }
+
     fn start_player(&mut self, handler: &dyn super::hls::HlsHandler, url: &str) {
         let mut player = handler.on_play(url, self.start);
         if let Some(fraction) = self.start_fraction {
@@ -90,6 +124,7 @@ pub(crate) fn dispatch(
     let mut response = HttpResponse::new("HTTP/1.1", 200, "OK");
     response.add_header("Server", "AirTunes/220.68");
 
+    let session_key = (peer, session_id.to_owned());
     let body = match (method, path) {
         ("GET", "/server-info") => server_info(conn, &mut response),
         ("POST", "/reverse") => {
@@ -99,9 +134,32 @@ pub(crate) fn dispatch(
             {
                 return Some(error(400, "Bad Request"));
             }
-            state.reverse.retain(|_, sender| !sender.is_closed());
+            state
+                .reverse
+                .retain(|_, channel| !channel.sender.is_closed());
             let (send, receive) = mpsc::channel(4);
-            state.reverse.insert(peer, send);
+            let Receiver {
+                active,
+                request_id,
+                reverse,
+            } = &mut *state;
+            if let Some(play) = active
+                .as_mut()
+                .filter(|p| p.peer == peer && p.session_id == session_id)
+            {
+                play.reverse_connection = Some(conn.nonce.clone());
+                if let Some((_, url, _)) = play.requested.take() {
+                    play.pending.push_front(url);
+                }
+                request_playlist(request_id, play, Some(&send));
+            }
+            reverse.insert(
+                session_key,
+                Reverse {
+                    connection: conn.nonce.clone(),
+                    sender: send,
+                },
+            );
             conn.hls_reverse = Some(receive);
             let mut upgrade = HttpResponse::new("HTTP/1.1", 101, "Switching Protocols");
             upgrade.add_header("Connection", "Upgrade");
@@ -119,7 +177,11 @@ pub(crate) fn dispatch(
             };
             let (start, start_fraction) = start_position(&dict);
             let direct = location.starts_with("https://");
-            let reverse = state.reverse.get(&peer).cloned();
+            let reverse = state
+                .reverse
+                .get(&session_key)
+                .or_else(|| state.reverse.get(&(peer, String::new())))
+                .cloned();
             if !direct
                 && (!location.contains("/master.m3u8")
                     || session_id.is_empty()
@@ -131,6 +193,7 @@ pub(crate) fn dispatch(
             let mut play = Playback {
                 peer,
                 session_id: session_id.into(),
+                reverse_connection: reverse.as_ref().map(|channel| channel.connection.clone()),
                 uuid: string(&dict, "uuid").map(str::to_owned),
                 prefer_high_quality: string(&dict, "clientProcName") == Some("YouTube"),
                 start,
@@ -149,7 +212,11 @@ pub(crate) fn dispatch(
             } else {
                 play.resources.push(location.into());
                 play.pending.push_back(location.into());
-                if !request_playlist(&mut state.request_id, &mut play, reverse.as_ref()) {
+                if !request_playlist(
+                    &mut state.request_id,
+                    &mut play,
+                    reverse.as_ref().map(|channel| &channel.sender),
+                ) {
                     return Some(error(503, "Service Unavailable"));
                 }
             }
@@ -161,45 +228,71 @@ pub(crate) fn dispatch(
             if !peer.is_loopback() {
                 return Some(error(404, "Not Found"));
             }
-            let playlist = state.active.as_ref().and_then(|play| {
+            let Receiver {
+                active,
+                request_id,
+                reverse,
+            } = &mut *state;
+            let playlist = active.as_mut().and_then(|play| {
                 let index = path
                     .strip_prefix(&play.path)?
                     .strip_suffix(".m3u8")?
-                    .parse()
+                    .parse::<usize>()
                     .ok()?;
-                play.playlists.get(&index)
+                let playlist = expand_condensed_playlist(play.playlists.get(&index)?)?;
+                play.refresh_playlist(index, request_id, play.reverse_sender(reverse));
+                Some(playlist)
             });
             let Some(playlist) = playlist else {
                 return Some(error(404, "Not Found"));
             };
             response.add_header("Content-Type", "application/vnd.apple.mpegurl");
+            response.add_header("Cache-Control", "no-store");
             response.add_header("Connection", "close");
             response.set_disconnect(true);
-            Some(expand_condensed_playlist(playlist)?.into_bytes())
+            Some(playlist.into_bytes())
         }
         ("POST", "/fp-setup2") => return Some(error(421, "Misdirected Request")),
+        ("POST", "/stop") => {
+            if state
+                .active
+                .as_ref()
+                .is_some_and(|play| play.matches_session(peer, session_id))
+            {
+                tracing::info!("AirPlay video stopped by sender");
+                state.active = None;
+            }
+            None
+        }
         (_, "/getProperty" | "/setProperty") => None,
         _ => {
-            let reverse = state.reverse.get(&peer).cloned();
             let Receiver {
-                active, request_id, ..
+                active,
+                request_id,
+                reverse,
             } = &mut *state;
-            let Some(play) = active.as_mut().filter(|p| {
-                p.peer == peer && (session_id.is_empty() || session_id == p.session_id)
-            }) else {
+            let Some(play) = active
+                .as_mut()
+                .filter(|p| p.matches_session(peer, session_id))
+            else {
                 if path == "/playback-info" {
                     return Some(error(404, "Not Found"));
                 }
                 return Some(error(400, "Bad Request"));
             };
+            let reverse = play.reverse_sender(reverse);
             if play
                 .requested
                 .as_ref()
                 .is_some_and(|(_, _, sent)| sent.elapsed() >= PLAYLIST_TIMEOUT)
             {
-                *active = None;
                 tracing::warn!("AirPlay FCUP playlist request timed out");
-                return Some(error(503, "Service Unavailable"));
+                if play.player.is_none() {
+                    *active = None;
+                    return Some(error(503, "Service Unavailable"));
+                }
+                play.requested = None;
+                request_playlist(request_id, play, reverse);
             }
             match (method, path) {
                 ("POST", "/action") => {
@@ -212,7 +305,7 @@ pub(crate) fn dispatch(
                     match (string(&action, "type"), params) {
                         (Some("unhandledURLResponse"), Some(params)) => {
                             if !receive_playlist(play, params)
-                                || !request_playlist(request_id, play, reverse.as_ref())
+                                || !request_playlist(request_id, play, reverse)
                             {
                                 return Some(error(400, "Bad Request"));
                             }
@@ -228,16 +321,16 @@ pub(crate) fn dispatch(
                                 .get("item")
                                 .and_then(Value::as_dictionary)
                                 .and_then(|item| string(item, "uuid"));
-                            if uuid.is_some() && uuid == play.uuid.as_deref() {
+                            if uuid.is_some()
+                                && (uuid == play.uuid.as_deref()
+                                    || (play.uuid.is_none() && !session_id.is_empty()))
+                            {
+                                tracing::info!("AirPlay video stopped after playlist removal");
                                 *active = None;
                             }
                         }
                         _ => {}
                     }
-                    None
-                }
-                ("POST", "/stop") => {
-                    *active = None;
                     None
                 }
                 ("POST", "/scrub") => {
@@ -421,6 +514,9 @@ fn request_playlist(
     play: &mut Playback,
     reverse: Option<&mpsc::Sender<Vec<u8>>>,
 ) -> bool {
+    if play.requested.is_some() {
+        return true;
+    }
     let Some(url) = play.pending.front().cloned() else {
         return true;
     };
@@ -471,6 +567,47 @@ fn request_playlist(
     true
 }
 
+impl Playback {
+    fn refresh_playlist(
+        &mut self,
+        index: usize,
+        request_id: &mut u64,
+        reverse: Option<&mpsc::Sender<Vec<u8>>>,
+    ) {
+        let Some(playlist) = self.playlists.get(&index) else {
+            return;
+        };
+        if !playlist
+            .lines()
+            .any(|line| line.starts_with("#EXT-X-TARGETDURATION:"))
+            || playlist
+                .lines()
+                .any(|line| matches!(line, "#EXT-X-ENDLIST" | "#EXT-X-PLAYLIST-TYPE:VOD"))
+        {
+            return;
+        }
+        let url = &self.resources[index];
+        if self
+            .requested
+            .as_ref()
+            .is_some_and(|(_, _, sent)| sent.elapsed() >= PLAYLIST_TIMEOUT)
+        {
+            self.requested = None;
+        }
+        if !self
+            .requested
+            .as_ref()
+            .is_some_and(|(_, pending, _)| pending == url)
+            && !self.pending.contains(url)
+        {
+            self.pending.push_back(url.clone());
+        }
+        // MediaPlayer can keep reading the cached window while the sender
+        // supplies the next one over the separate reverse connection.
+        request_playlist(request_id, self, reverse);
+    }
+}
+
 fn receive_playlist(play: &mut Playback, params: &Dictionary) -> bool {
     let Some((id, url, _)) = play.requested.as_ref() else {
         return false;
@@ -502,7 +639,12 @@ fn receive_playlist(play: &mut Playback, params: &Dictionary) -> bool {
     };
     let resources = play.resources.len();
     let pending = play.pending.len();
-    let stored: usize = play.playlists.values().map(String::len).sum();
+    let stored: usize = play
+        .playlists
+        .iter()
+        .filter(|(key, _)| **key != index)
+        .map(|(_, text)| text.len())
+        .sum();
     let Some(text) = rewrite_playlist(play, &url, text)
         .filter(|text| stored + text.len() <= MAX_SESSION_PLAYLIST_BYTES)
     else {
@@ -727,12 +869,11 @@ mod tests {
         );
     }
 
-    #[test]
-    fn fcup_rewrites_video_audio_and_condensed_segment_urls() {
-        let master = "mlhls://sender/dir/master.m3u8";
-        let mut play = Playback {
+    fn playback_fixture(master: &str) -> Playback {
+        Playback {
             peer: IpAddr::from([127, 0, 0, 1]),
             session_id: "test".into(),
+            reverse_connection: None,
             uuid: None,
             prefer_high_quality: false,
             start: 0.0,
@@ -745,7 +886,39 @@ mod tests {
             resources: vec![master.into()],
             playlists: HashMap::new(),
             player: None,
+        }
+    }
+
+    #[test]
+    fn only_the_current_reverse_connection_stops_playback() {
+        let mut play = playback_fixture("mlhls://sender/master.m3u8");
+        let peer = play.peer;
+        play.reverse_connection = Some("current".into());
+        let (sender, _receiver) = mpsc::channel(4);
+        let mut receiver = Receiver {
+            active: Some(play),
+            ..Receiver::default()
         };
+        receiver.reverse.insert(
+            (peer, "test".into()),
+            Reverse {
+                connection: "current".into(),
+                sender,
+            },
+        );
+        receiver.connection_closed(peer, "old");
+        receiver.connection_closed(IpAddr::from([127, 0, 0, 2]), "current");
+        assert!(receiver.active.is_some());
+        assert_eq!(receiver.reverse.len(), 1);
+        receiver.connection_closed(peer, "current");
+        assert!(receiver.active.is_none());
+        assert!(receiver.reverse.is_empty());
+    }
+
+    #[test]
+    fn fcup_rewrites_video_audio_and_condensed_segment_urls() {
+        let master = "mlhls://sender/dir/master.m3u8";
+        let mut play = playback_fixture(master);
         let rewritten = rewrite_playlist(
             &mut play,
             master,
@@ -773,5 +946,37 @@ mod tests {
             media,
             "#EXTM3U\n#EXTINF:6,\nhttps://media.example/seg/seq/24/ts/test.ts\n"
         );
+
+        // After startup, the local player reloads only its selected rendition.
+        play.pending.clear();
+        let video = 2;
+        let url = play.resources[video].clone();
+        play.playlists.insert(
+            video,
+            "#EXTM3U\n#EXT-X-TARGETDURATION:6\n#EXT-X-MEDIA-SEQUENCE:24\n".into(),
+        );
+        let (send, mut receive) = mpsc::channel(4);
+        let mut request_id = 0;
+        play.refresh_playlist(video, &mut request_id, Some(&send));
+        play.refresh_playlist(video, &mut request_id, Some(&send));
+        assert!(receive.try_recv().is_ok());
+        assert!(receive.try_recv().is_err());
+        assert!(play.playlists[&video].contains("SEQUENCE:24"));
+
+        let params = Dictionary::from_iter([
+            ("FCUP_Response_URL", Value::String(url)),
+            ("FCUP_Response_RequestID", Value::Integer(request_id.into())),
+            (
+                "FCUP_Response_Data",
+                Value::Data(
+                    b"#EXTM3U\n#EXT-X-TARGETDURATION:6\n#EXT-X-MEDIA-SEQUENCE:25\n#EXT-X-ENDLIST\n"
+                        .to_vec(),
+                ),
+            ),
+        ]);
+        assert!(receive_playlist(&mut play, &params));
+        assert!(play.playlists[&video].contains("SEQUENCE:25"));
+        play.refresh_playlist(video, &mut request_id, Some(&send));
+        assert!(receive.try_recv().is_err());
     }
 }

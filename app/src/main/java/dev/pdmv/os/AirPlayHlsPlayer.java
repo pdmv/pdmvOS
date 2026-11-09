@@ -25,6 +25,7 @@ final class AirPlayHlsPlayer {
     private boolean shouldPlay;
     private boolean playingRequested;
     private boolean prepared;
+    private boolean seekable = true;
     private boolean buffering;
     private long nextReport;
     private float gain;
@@ -141,6 +142,8 @@ final class AirPlayHlsPlayer {
                         buffering = what == MediaPlayer.MEDIA_INFO_BUFFERING_START;
                         nextReport = 0;
                         Log.i("AirPlayReceiver", "HLS buffering " + (buffering ? "started" : "ended"));
+                    } else if (what == MediaPlayer.MEDIA_INFO_NOT_SEEKABLE) {
+                        seekable = false;
                     }
                 }
                 return false;
@@ -165,10 +168,10 @@ final class AirPlayHlsPlayer {
     }
 
     private void seek() {
+        int duration = player.getDuration();
+        if (!seekable || duration <= 0) return;
         int position = seekPosition;
         if (position < 0) {
-            int duration = player.getDuration();
-            if (duration <= 0) return;
             position = (int) Math.round(duration * ((-1L - position) / 1_000_000.0));
         }
         player.seekTo(position, MediaPlayer.SEEK_CLOSEST);
@@ -196,6 +199,7 @@ final class AirPlayHlsPlayer {
     private void release() {
         main.removeCallbacks(startupTimeout);
         prepared = false;
+        seekable = true;
         buffering = false;
         nextReport = 0;
         playingRequested = false;
