@@ -1,5 +1,12 @@
 # Changelog
 
+## 4.0.5
+
+- Thêm menu Wi-Fi với kết quả quét, mức sóng, trạng thái kết nối và mục Cài đặt hệ thống.
+- Thêm switch AirPlay và Wi-Fi, đổi thao tác nút Cài đặt và hiển thị tên bộ thu AirPlay trong menu Đầu vào.
+- Đồng bộ hiệu ứng nhấn hàng menu, dấu check và toast.
+- Bỏ xử lý vẽ ô ngoài vùng hiển thị, giới hạn bộ đệm chữ Wi-Fi theo vùng cuộn và làm mới riêng spinner khi giao diện đã đứng yên.
+
 ## 4.0.4
 
 - Khử răng cưa ở góc bo của khung AirPlay trong lúc thu nhỏ và chuyển sang toàn màn hình.

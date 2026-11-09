@@ -134,6 +134,7 @@ abstract class NativeSurfaceView extends ViewGroup {
         Choreographer.getInstance().removeFrameCallback(tick);scheduled=false;super.onDetachedFromWindow();
     }
     final void invalidateScene(){scene.invalidate();invalidate();}
+    final void invalidateOverlay(){if(renderingActive&&overlay.getVisibility()==VISIBLE)overlay.invalidate();}
 
     final void configureDisplay() {
         try {

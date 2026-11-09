@@ -89,7 +89,7 @@ assert 'menuContent.update(dt)' in s and 't.tilt.update(dt)' in s, 'Independent 
 assert 'setLinearText(true)' in s and 'Paint.HINTING_OFF' in s, 'Stable fractional typography missing'
 assert 'MotionProfile.arrangeAngle(' in s and 'active=moveMode||active' in s, 'Arrange ring must animate only in move mode'
 assert 'MENU_SELECTION_K' in Path('app/src/main/java/dev/pdmv/os/MotionProfile.java').read_text()
-assert 'menuSelection.aim(row)' in s, 'Dropdown focus selection must spring between rows'
+assert 'menuSelection.aim(slot)' in s, 'Dropdown focus selection must spring between visible row slots'
 assert 'm.sourceHeader=2;m.selected=-1' in s, 'Output must open with focus on its pill button'
 assert 'int wholeTile=c.save()' in s and 'c.restoreToCount(wholeTile)' in s, 'Shortcut icon/text must share press transform'
 assert 'private static final int TILE_BITMAP_W=504, TILE_BITMAP_H=284' in s, 'Two-times native tile texture size missing'

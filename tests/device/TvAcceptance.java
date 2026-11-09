@@ -290,8 +290,8 @@ public final class TvAcceptance extends Instrumentation {
         key(82);SystemClock.sleep(650);key(20);SystemClock.sleep(150);
         main(()->{
             Object v=view(),menu=field(v,"menu"),spring=field(v,"menuReveal"),selection=field(v,"menuSelection");int selected=(Integer)field(menu,"selected");check(selected>0,"menu selection did not move");
-            Bitmap surface=(Bitmap)field(menu,"surface");call(v,"closeMenu");float progress=(Float)field(spring,"value"),velocity=(Float)field(spring,"velocity"),row=(Float)field(selection,"value"),rowVelocity=(Float)field(selection,"velocity");
-            call(v,"openTileMenu");Object reopened=field(v,"menu");check(field(reopened,"surface")==surface,"menu reversal rebuilt surface");check((Integer)field(reopened,"selected")==selected,"menu reversal reset selected row");
+            Bitmap surface=(Bitmap)field(menu,"header");call(v,"closeMenu");float progress=(Float)field(spring,"value"),velocity=(Float)field(spring,"velocity"),row=(Float)field(selection,"value"),rowVelocity=(Float)field(selection,"velocity");
+            call(v,"openTileMenu");Object reopened=field(v,"menu");check(field(reopened,"header")==surface,"menu reversal rebuilt header texture");check((Integer)field(reopened,"selected")==selected,"menu reversal reset selected row");
             check((Float)field(spring,"value")==progress&&(Float)field(spring,"velocity")==velocity,"menu reversal lost momentum");check((Float)field(selection,"value")==row&&(Float)field(selection,"velocity")==rowVelocity,"menu reversal reset row motion");
             android.util.LruCache cache=(android.util.LruCache)field(v,"menuTextures");
             for(int i=0;i<80;i++)cache.put("qa-budget-"+i,Bitmap.createBitmap(128,128,Bitmap.Config.ARGB_8888));
@@ -735,7 +735,9 @@ public final class TvAcceptance extends Instrumentation {
                 main(()->{present.invoke(view(),state);return null;});
                 if(event==3){SystemClock.sleep(650);main(()->{present.invoke(view(),state);return null;});}
                 check((Integer)main(()->field(sounds,"lastEvent"))==before,"Wi-Fi unexpectedly played a sound");
-                check(((String)state("toastMessage")).equals("Wi-Fi · "+label),"Wi-Fi sound/toast mismatch");
+                String ssid=(String)main(()->field(field(activity,"controls"),"connectedWifiName"));
+                String expected=event==2?(ssid.isEmpty()?"Đã kết nối Wi-Fi":"Đã kết nối "+ssid):"Wi-Fi · "+label;
+                check(expected.equals(state("toastMessage")),"Wi-Fi sound/toast mismatch");
                 int played=(Integer)main(()->field(sounds,"lastEvent"));main(()->{present.invoke(view(),state);return null;});
                 check((Integer)main(()->field(sounds,"lastEvent"))==played,"repeated Wi-Fi state played sound");SystemClock.sleep(25);
             }
@@ -911,7 +913,7 @@ public final class TvAcceptance extends Instrumentation {
         for(int i:new int[]{0,2,3}){final int index=i;rects.add((android.graphics.RectF)main(()->{Method m=view().getClass().getDeclaredMethod("headerRect",int.class);m.setAccessible(true);return m.invoke(view(),index);}));}
         for(int i=0;i<rects.size();i++){android.graphics.RectF r=new android.graphics.RectF(rects.get(i));r.inset(-3.24f,-3.24f);for(int j=0;j<rects.size();j++)if(i!=j)check(!android.graphics.RectF.intersects(r,rects.get(j)),"header focus overlaps neighbor");}
         // A real held key must dispatch exactly one system settings intent.
-        for(int index:new int[]{0,2}){
+        for(int index:new int[]{0,2,3}){
             String action=index==0?android.provider.Settings.ACTION_WIFI_SETTINGS:index==2?android.media.tv.TvInputManager.ACTION_SETUP_INPUTS:android.provider.Settings.ACTION_SETTINGS;
             ActivityMonitor monitor=addMonitor(new IntentFilter(action),new ActivityResult(Activity.RESULT_CANCELED,null),true);
             main(()->{set(view(),"focusHeader",true);set(view(),"headerSelection",index);return null;});
@@ -920,9 +922,7 @@ public final class TvAcceptance extends Instrumentation {
             check(monitor.getHits()==1,"header hold did not dispatch exactly once: "+index);removeMonitor(monitor);
             check(!(Boolean)state("holdingOK"),"header hold stuck after release");
         }
-        main(()->{set(view(),"headerSelection",3);return null;});
-        ActivityMonitor settings=addMonitor(new IntentFilter(android.provider.Settings.ACTION_SETTINGS),new ActivityResult(Activity.RESULT_CANCELED,null),true);
-        key(23);check(settings.getHits()==1,"clock settings short press failed");removeMonitor(settings);
+        settingsButton(report);
         main(()->{set(view(),"headerSelection",2);return null;});key(23);waitMotion();
         if(state("menu")==null){
             check(((String)state("toastMessage")).equals("Không tìm thấy đầu vào nào"),"missing input fallback toast");
@@ -934,7 +934,8 @@ public final class TvAcceptance extends Instrumentation {
         report.put("input_discovery","system-input-menu");
         }
         main(()->{Object c=field(activity,"controls");int current=(Integer)field(c,"wifi");set(c,"wifi",current==0?1:0);call(view(),"refreshControlStates");return null;});waitMotion();
-        check(((String)state("toastMessage")).startsWith("Wi-Fi ·"),"radio change did not produce a toast");screenshot("system-state-toast");
+        String wifiToast=(String)state("toastMessage");
+        check(wifiToast.startsWith("Wi-Fi ·")||wifiToast.startsWith("Đã kết nối "),"radio change did not produce a toast");screenshot("system-state-toast");
         main(()->{Method m=view().getClass().getDeclaredMethod("showToast",String.class);m.setAccessible(true);m.invoke(view(),"Đã kết nối");return null;});waitMotion();
         check((Float)main(()->field(field(view(),"toastWidth"),"value"))<360,"short toast has fixed minimum width");screenshot("content-fit-toast");
         check(getTargetContext().getPackageManager().getPackageInfo("dev.pdmv.os",android.content.pm.PackageManager.GET_SERVICES).services==null,"obsolete power service declared");
@@ -1146,21 +1147,155 @@ public final class TvAcceptance extends Instrumentation {
         }finally{
             main(()->{List grid=(List)field(repo(),"grid"),all=(List)field(repo(),"all");grid.subList(originalSizes[0],grid.size()).clear();all.subList(originalSizes[1],all.size()).clear();set(view(),"gridFocus",0);set(view(),"gridFirstRow",0);Object scroll=field(view(),"gridScroll");set(scroll,"value",0f);set(scroll,"target",0f);set(scroll,"velocity",0f);return null;});
         }
-        home();key(19);main(()->{set(view(),"headerSelection",3);return null;});
-        ActivityMonitor settings=addMonitor(new IntentFilter(android.provider.Settings.ACTION_SETTINGS),new ActivityResult(Activity.RESULT_CANCELED,null),true);
-        try{
-            long down=SystemClock.uptimeMillis();injectKey(new KeyEvent(down,down,KeyEvent.ACTION_DOWN,23,0));SystemClock.sleep(550);injectKey(new KeyEvent(down,SystemClock.uptimeMillis(),KeyEvent.ACTION_UP,23,0));waitMotion();
-            check(state("menu")==null&&settings.getHits()==0,"Settings hold must not open menu or settings");
-            check((Boolean)state("updateDialog")&&state("dialogAction")!=null
-                &&"Cập nhật pdmvOS".equals(state("dialogTitle")),"Settings hold must open the update dialog");
-            key(4);waitMotion();
-            key(23);check(settings.getHits()==1,"Short Settings press must still open Android settings");
-        }finally{removeMonitor(settings);}
+        settingsButton(report);
         key(4);key(20);waitMotion();
         main(()->{set(view(),"moveMode",true);Method m=activity.getClass().getDeclaredMethod("onNewIntent",Intent.class);m.setAccessible(true);m.invoke(activity,new Intent(Intent.ACTION_MAIN).addCategory(Intent.CATEGORY_HOME));return null;});waitMotion();
         check((Integer)state("page")==0&&!(Boolean)state("moveMode")&&state("menu")==null,"System Home must return to the launcher root");
         report.put("system_home_returns_to_root","PASS");
-        key(4);report.put("dock_down_follows_visible_column","PASS").put("home_down_selects_first","PASS").put("settings_hold_update_dialog","PASS").put("settings_short_press","PASS");
+        key(4);report.put("dock_down_follows_visible_column","PASS").put("home_down_selects_first","PASS");
+    }
+    private void settingsButton(JSONObject report)throws Exception{
+        home();key(19);main(()->{set(view(),"headerSelection",3);call(view(),"updateFocus");return null;});
+        ActivityMonitor settings=addMonitor(new IntentFilter(android.provider.Settings.ACTION_SETTINGS),new ActivityResult(Activity.RESULT_CANCELED,null),true);
+        try{
+            key(23);waitMotion();
+            check(settings.getHits()==0&&(Boolean)state("updateDialog")&&state("dialogAction")!=null
+                &&"Cập nhật pdmvOS".equals(state("dialogTitle")),"Settings tap must open the launcher update dialog");
+            check("Nhấn giữ để mở cài đặt hệ thống".equals(state("toastMessage")),"Settings tap is missing the hold hint");
+            screenshot("settings-short-press");
+            key(4);waitMotion();
+            long down=SystemClock.uptimeMillis();
+            injectKey(new KeyEvent(down,down,KeyEvent.ACTION_DOWN,23,0));
+            SystemClock.sleep(550);
+            injectKey(new KeyEvent(down,SystemClock.uptimeMillis(),KeyEvent.ACTION_UP,23,0));
+            waitMotion();
+            check(settings.getHits()==1&&state("dialogAction")==null,"Settings hold must launch Android settings once");
+        }finally{removeMonitor(settings);}
+        report.put("settings_short_launcher_long_system","PASS");
+    }
+    private void airPlayMenuLabels(JSONObject report)throws Exception{
+        Class<?> type=Class.forName("dev.pdmv.os.AirPlayReceiver",true,activity.getClassLoader());
+        Method get=type.getDeclaredMethod("getInstance");get.setAccessible(true);
+        Object receiver=get.invoke(null);
+        Method start=type.getDeclaredMethod("start",android.content.Context.class,int.class);start.setAccessible(true);
+        int original=(Integer)main(()->call(receiver,"getCurrentMode"));
+        try{
+            for(int mode:new int[]{0,3}){
+                check((Boolean)main(()->start.invoke(receiver,activity,mode)),"AirPlay mode setup failed");
+                home();key(19);main(()->{set(view(),"headerSelection",2);call(view(),"updateFocus");return null;});
+                key(23);waitMotion();
+                String name=(String)main(()->call(receiver,"getReceiverName"));
+                check(mode==3?name==null:name!=null&&name.startsWith("pdmvOS "),"Unexpected AirPlay receiver name");
+                String suffix=mode==3?"(Tắt)":"("+name+")";
+                Object row=main(()->((List<?>)field(field(view(),"menu"),"items")).get(0));
+                check("AirPlay".equals(field(row,"title"))&&suffix.equals(field(row,"suffix")),"Input menu AirPlay label mismatch");
+                screenshot("airplay-input-"+mode);
+                key(20);key(23);waitMotion();
+                Object submenu=state("menu");
+                check("Chế độ AirPlay".equals(field(submenu,"title"))&&"".equals(field(submenu,"suffix")),"AirPlay submenu title mismatch");
+                List<?> items=(List<?>)field(submenu,"items");
+                check(items.size()==4&&(mode==3?"Tắt":"Bật").equals(field(items.get(0),"title")),"AirPlay switch must replace the off option");
+                screenshot("airplay-mode-"+mode);
+                key(20);waitMotion();
+                check((Integer)field(submenu,"selected")== (mode==3?0:1),"Disabled AirPlay options must skip focus");
+                if(mode==0){
+                    check((Float)field(field(submenu,"separator"),"value")<.01f,"Separator must hide at the first option");
+                    key(20);waitMotion();
+                    check((Float)field(field(submenu,"separator"),"value")>.95f,"Separator must show at distant options");
+                    long down=SystemClock.uptimeMillis();
+                    injectKey(new KeyEvent(down,down,KeyEvent.ACTION_DOWN,23,0));
+                    SystemClock.sleep(170);
+                    Object rowPress=field(submenu,"rowPress");
+                    check((Integer)field(submenu,"pressedRow")==2&&(Float)field(rowPress,"value")>.6f
+                        &&(Integer)field(submenu,"checked")==1,"Pressed row must sink before the check changes");
+                    injectKey(new KeyEvent(down,SystemClock.uptimeMillis(),KeyEvent.ACTION_UP,23,0));
+                    waitMotion();
+                    check((Float)field(rowPress,"value")<.01f&&(Integer)field(submenu,"checked")==2
+                        &&(Float)field(field(submenu,"statusMix"),"value")>.99f,"Release must settle the row and move the check");
+                    key(19);key(23);waitMotion();
+                    key(20);waitMotion();
+                    key(19);key(19);key(23);waitMotion();
+                    check(state("dialogAction")==null,"AirPlay off must not ask for confirmation");
+                    check(!(Boolean)field(submenu,"radioEnabled")&&(Integer)main(()->call(receiver,"getCurrentMode"))==3,"AirPlay switch did not turn off");
+                }else{
+                    key(23);waitMotion();
+                    check((Boolean)field(submenu,"radioEnabled")&&(Integer)main(()->call(receiver,"getCurrentMode"))==0,"AirPlay switch did not restore the active mode");
+                }
+            }
+        }finally{main(()->start.invoke(receiver,activity,original));}
+        report.put("airplay_menu_receiver_labels","PASS");
+    }
+    private void wifiMenu(JSONObject report)throws Exception{
+        home();key(19);main(()->{set(view(),"headerSelection",0);set(view(),"wifiScanPermissionAsked",true);call(view(),"updateFocus");return null;});
+        key(23);waitMotion();
+        Object menu=state("menu"),controls=main(()->field(activity,"controls"));
+        check(menu!=null&&"Wi-Fi".equals(field(menu,"title")),"Wi-Fi tap did not open its menu");
+        List<?> items=(List<?>)field(menu,"items");
+        check(((Boolean)field(menu,"radioEnabled")?"Bật":"Tắt").equals(field(items.get(0),"title"))&&"Mở cài đặt".equals(field(items.get(items.size()-1),"title")),"Wi-Fi menu order is incorrect");
+        int connected=(Integer)field(controls,"connectedWifiId");
+        String connectedName=(String)field(controls,"connectedWifiName");
+        if((Integer)field(controls,"wifi")==2&&android.os.Build.VERSION.SDK_INT<=28){
+            boolean found=false;
+            for(Object item:items)if(connected>=0&&(Integer)field(item,"wifiId")==connected)found=true;
+            check(found&&!connectedName.isEmpty(),"Connected Wi-Fi name or active network row is missing");
+            ActivityMonitor settings=addMonitor(new IntentFilter(android.provider.Settings.ACTION_WIFI_SETTINGS),new ActivityResult(Activity.RESULT_CANCELED,null),true);
+            try{
+                key(20);key(23);waitMotion();
+                check(settings.getHits()==0&&state("menu")==menu,"Tapping the connected Wi-Fi must keep its connection and menu");
+                key(19);waitMotion();
+            }finally{removeMonitor(settings);}
+        }
+        screenshot("wifi-radio-menu");
+        key(4);waitMotion();
+        ActivityMonitor wifiSettings=addMonitor(new IntentFilter(android.provider.Settings.ACTION_WIFI_SETTINGS),new ActivityResult(Activity.RESULT_CANCELED,null),true);
+        try{
+            long down=SystemClock.uptimeMillis();
+            injectKey(new KeyEvent(down,down,KeyEvent.ACTION_DOWN,23,0));
+            SystemClock.sleep(550);injectKey(new KeyEvent(down,SystemClock.uptimeMillis(),KeyEvent.ACTION_UP,23,0));
+            waitMotion();check(wifiSettings.getHits()==1,"Wi-Fi pill hold did not open system Wi-Fi settings");
+        }finally{removeMonitor(wifiSettings);}
+        report.put("wifi_menu_visible_networks",items.size()-2).put("wifi_menu_hold","PASS");
+        if((Integer)field(controls,"wifi")!=0)wifiMenuPaging(report);
+    }
+    private void wifiMenuPaging(JSONObject report)throws Exception{
+        Object menu=main(()->{
+            Object v=view();
+            ((Handler)field(v,"handler")).removeCallbacks((Runnable)field(v,"statusTick"));
+            call(v,"openWifiMenu");
+            Object m=field(v,"menu");
+            Class<?> network=Class.forName("dev.pdmv.os.TvControls$NearbyWifi",true,activity.getClassLoader());
+            Constructor<?> factory=network.getDeclaredConstructor(String.class,int.class,int.class,boolean.class,int.class);
+            factory.setAccessible(true);
+            ArrayList<Object> fixtures=new ArrayList<>();
+            for(int i=0;i<12;i++)fixtures.add(factory.newInstance("Mạng thử "+i,4,-1,false,1+i%3));
+            List<?> rows=(List<?>)field(m,"items");
+            rows.subList(1,rows.size()).clear();
+            Method add=v.getClass().getDeclaredMethod("addWifiRows",m.getClass(),List.class);
+            add.setAccessible(true);add.invoke(v,m,fixtures);
+            ((List<?>)field(m,"labels")).clear();
+            Method prepare=v.getClass().getDeclaredMethod("prepareMenu",m.getClass());
+            prepare.setAccessible(true);prepare.invoke(v,m);
+            return m;
+        });
+        ActivityMonitor wifiSettings=addMonitor(new IntentFilter(android.provider.Settings.ACTION_WIFI_SETTINGS),new ActivityResult(Activity.RESULT_CANCELED,null),true);
+        try{
+            for(int i=0;i<10;i++)key(20);
+            waitMotion();
+            check((Integer)field(menu,"selected")==10,"Wi-Fi focus did not navigate beyond the first page");
+            float offset=(Float)field(field(menu,"scroll"),"value");
+            check(Math.abs(offset-4f)<.01f,"Wi-Fi must scroll by whole rows");
+            check((Integer)call(menu,"visibleRows")==8,"Wi-Fi menu exceeded the eight-row limit");
+            Object height=field(menu,"wifiHeight");
+            check(Math.abs((Float)field(height,"value")-(Float)field(height,"target"))<.1f,"Wi-Fi menu height did not settle");
+            Method slot=menu.getClass().getDeclaredMethod("rowSlot",int.class,float.class);slot.setAccessible(true);
+            check(slot.invoke(menu,13,0f).equals(slot.invoke(menu,13,offset)),"Wi-Fi settings row moved while scrolling");
+            key(23);waitMotion();
+            check(wifiSettings.getHits()==1,"New Wi-Fi did not hand off to system settings");
+        }finally{
+            removeMonitor(wifiSettings);
+            main(()->{((Handler)field(view(),"handler")).postDelayed((Runnable)field(view(),"statusTick"),1000);return null;});
+        }
+        report.put("wifi_fixed_footer_and_system_handoff","PASS");
     }
     private void brightReadability(JSONObject report)throws Exception{
         Object store=main(()->field(activity,"wallpapers"));
@@ -1984,6 +2119,7 @@ public final class TvAcceptance extends Instrumentation {
             else if("readability".equals(options.getString("mode"))){brightReadability(report);}
             else if("wallpaper".equals(options.getString("mode"))){wallpaperFeatures(report);}
             else if("navigation-launcher".equals(options.getString("mode"))){navigationLauncher(report);}
+            else if("settings-airplay".equals(options.getString("mode"))){settingsButton(report);airPlayMenuLabels(report);wifiMenu(report);wifiSound(report);}
             else if("glass".equals(options.getString("mode"))||"glass-profile".equals(options.getString("mode"))){glassFeatures(report);if("glass-profile".equals(options.getString("mode")))profile(report);}
             else{
                 if(!"features".equals(options.getString("mode","all")))profile(report);

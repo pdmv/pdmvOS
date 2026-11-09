@@ -2,6 +2,7 @@ package dev.pdmv.os;
 
 import android.app.Activity;
 import android.content.ActivityNotFoundException;
+import android.content.Context;
 import android.content.Intent;
 import android.content.SharedPreferences;
 import android.content.res.Configuration;
@@ -76,7 +77,7 @@ public final class MainActivity extends Activity {
     private void loadSolarAsync(){
         new Thread(()->{
             final HashMap<String,Drawable> loaded=new HashMap<>();
-            for(String name:new String[]{"settings", "check", "info", "move", "apps", "wifi", "input", "plus"}){
+            for(String name:new String[]{"settings", "check", "info", "move", "apps", "input", "plus"}){
                 try{
                     int resource=getResources().getIdentifier("solar_"+name,"drawable",getPackageName());
                     Drawable icon=getResources().getDrawable(resource,getTheme()).mutate();
@@ -411,6 +412,14 @@ public final class MainActivity extends Activity {
         catch(ActivityNotFoundException error){toast("TV không cung cấp trình gỡ cài đặt");}
     }
     private void toast(String s){if(view!=null)view.showToast(s);}
+    private static final int WIFI_SCAN_PERMISSION=9401;
+    @Override public void onRequestPermissionsResult(int request,String[] permissions,int[] grants){
+        super.onRequestPermissionsResult(request,permissions,grants);
+        if(request==WIFI_SCAN_PERMISSION&&view!=null&&view.wifiMenuOpen()){
+            view.wifiScanDirty=true;
+            view.requestWifiScan(false);
+        }
+    }
     private void launchSystem(Intent intent,String failure){
         try{startActivity(intent);}catch(RuntimeException error){toast(failure);}
     }
@@ -461,7 +470,7 @@ public final class MainActivity extends Activity {
         private int airPlaySession;
         private int airPlayWidth=1920,airPlayHeight=1080;
         private android.net.wifi.WifiManager.WifiLock airPlayWifiLock;
-        private static final float AIRPLAY_TOAST_TRAVEL=144f,AIRPLAY_TOAST_SPACE=174f;
+        private static final float TOAST_TOP=946f,AIRPLAY_TOAST_SPACE=174f;
         private final SpringValue launchReveal=new SpringValue(0f,MotionProfile.LAUNCH_K,MotionProfile.LAUNCH_D);
         // A shared progress spring drives backdrop dimming, position and scale together
         // when a third-party application hands control back to pdmvOS.
@@ -509,9 +518,11 @@ public final class MainActivity extends Activity {
         private Throwable renderFailure;
         private long lastFrame=0L;
         private boolean motionWasActive;
+        private boolean canHoldHeaderOrTile(){return menu==null||(focusHeader&&menu.sourceHeader==0&&menu.selected<0);}
         private final Runnable holdAction=()->{
-            if(holdingOK&&menu==null){
+            if(holdingOK&&canHoldHeaderOrTile()){
                 longPressed=true;
+                if(menu!=null)closeMenu();
                 if(focusHeader)headerHold();else openTileMenu();
             }
         };
@@ -536,13 +547,20 @@ public final class MainActivity extends Activity {
         }
         void resumePolling(){
             pausePolling();
+            android.content.IntentFilter wifiEvents=new android.content.IntentFilter(android.net.wifi.WifiManager.SCAN_RESULTS_AVAILABLE_ACTION);
+            wifiEvents.addAction(android.net.wifi.WifiManager.SUPPLICANT_STATE_CHANGED_ACTION);
+            if(android.os.Build.VERSION.SDK_INT>=33)registerReceiver(wifiEventsReceiver,wifiEvents,Context.RECEIVER_NOT_EXPORTED);
+            else registerReceiver(wifiEventsReceiver,wifiEvents);
+            wifiEventsRegistered=true;
             clockTick.run();
             handler.postDelayed(statusTick,1000);
             if(artworkWarmScheduled)postOnAnimation(artworkStep);
         }
         void pausePolling(){
+            if(wifiEventsRegistered){unregisterReceiver(wifiEventsReceiver);wifiEventsRegistered=false;}
             handler.removeCallbacks(clockTick);
             handler.removeCallbacks(statusTick);
+            handler.removeCallbacks(wifiSpinnerTick);
             removeCallbacks(artworkStep);
             handler.removeCallbacks(artworkStep);
         }
@@ -694,7 +712,7 @@ public final class MainActivity extends Activity {
         private boolean startupStarted;
         private float startupWait;
         private float dockRecoil(){return UiGeometry.dockTop(dockSpring.value)-UiGeometry.dockTop(drawer.value);}
-        private float docTop(){return UiGeometry.dockTop(dockSpring.value)+260f*(1f-startupReveal.value);}
+        private float docTop(){return UiGeometry.dockTop(dockSpring.value)+12f*(1f-UiGeometry.clamp(dockSpring.value,0f,1f))+260f*(1f-startupReveal.value);}
         private float rowOffset(int row){return UiGeometry.gridTransitionOffset(drawerFlow.rowProgress(row-gridScroll.value));}
         private float gridClipTop(){return docTop()+UiGeometry.DOCK_PADDING+UiGeometry.TILE_MAX_HEIGHT+12f;}
         private boolean updateMenuSelection(float dt){
@@ -823,13 +841,41 @@ public final class MainActivity extends Activity {
             Menu animatedMenu=menu!=null?menu:closingMenu;
             menuRowEmphasis.aim(animatedMenu!=null&&animatedMenu.selected>=0&&(menu==null||dialogAction==null)?1f:0f);
             active=menuRowEmphasis.update(dt)|active;
-            if(animatedMenu!=null)active=animatedMenu.frostMix.update(dt)|active;
+            if(animatedMenu!=null){
+                active=animatedMenu.frostMix.update(dt)|active;
+                boolean held=animatedMenu==menu&&holdingOK&&pressStartedInMenu&&dialogAction==null
+                    &&animatedMenu.pressedRow==animatedMenu.selected;
+                animatedMenu.rowPress.aim(held?1f:0f,
+                    held?MotionProfile.PRESS_IN_K:MotionProfile.PRESS_OUT_K,
+                    held?MotionProfile.PRESS_IN_D:MotionProfile.PRESS_OUT_D);
+                active=animatedMenu.rowPress.update(dt)|active;
+                if(animatedMenu.radioMenu()){
+                    animatedMenu.separator.aim(animatedMenu.selected>1?1f:0f);
+                    boolean scrolling=animatedMenu.scroll.busy();
+                    active=animatedMenu.switchState.update(dt)|animatedMenu.separator.update(dt)|animatedMenu.scroll.update(dt)|active;
+                    if(scrolling&&!animatedMenu.scroll.busy()&&animatedMenu.sourceHeader==0)prepareWifiLabels(animatedMenu);
+                    // Start the status change as the pressed row rises back up.
+                    if(animatedMenu.statusMix.value>0f||animatedMenu.rowPress.value<=.45f)
+                        active=animatedMenu.statusMix.update(dt)|active;
+                    if(animatedMenu.sourceHeader==0){
+                        active=animatedMenu.wifiHeight.update(dt)|animatedMenu.wifiListMix.update(dt)|animatedMenu.wifiBusy.update(dt)|active;
+                    }
+                }
+            }
+            if(inputMenuOutgoing!=null){
+                inputMenuOutgoing.rowPress.aim(0f,MotionProfile.PRESS_OUT_K,MotionProfile.PRESS_OUT_D);
+                active=inputMenuOutgoing.rowPress.update(dt)|active;
+            }
             dialogChoice.aim(dialogConfirm?1f:0f);
             active=airPlayEntrance.update(dt)|toastWidth.update(dt)|toastChange.update(dt)|toastReveal.update(dt)|dialogReveal.update(dt)|dialogChoice.update(dt)|active;
             active=advanceDialogProgress(dt)|active;
             active=moveMode||active;
             motionWasActive=active;
             if(active)postInvalidateOnAnimation();
+            else if(wifiSpinnerVisible()){
+                handler.removeCallbacks(wifiSpinnerTick);
+                handler.postDelayed(wifiSpinnerTick,33);
+            }
         }
         private final HashMap<String,TileNode> tileNodes=new HashMap<>();
         private boolean nativeTiles;
@@ -837,7 +883,14 @@ public final class MainActivity extends Activity {
         private final Rect localTileClip=new Rect();
         private final class TileNode extends View {
             final Tile tile;int seenGeneration;boolean dock;int materialSlot=-2;int tint=-1;float label=-1f,progress=-1f,reveal=-1f;int session=-1;Bitmap rendered;
+            private int clipTop=-1,clipBottom=-1;
             TileNode(Tile tile){super(MainActivity.this);this.tile=tile;setPivotX(138f);setPivotY(83f);setLayerType(View.LAYER_TYPE_NONE,null);}
+            void updateClip(int top,int bottom){
+                if(clipTop==top&&clipBottom==bottom)return;
+                clipTop=top;clipBottom=bottom;
+                if(top<0)setClipBounds(null);
+                else{localTileClip.set(0,top,276,bottom);setClipBounds(localTileClip);}
+            }
             @Override protected void onDraw(Canvas c){
                 int padded=c.save();c.translate(12f,12f);
                 glassMaterials.beginSurface(c);
@@ -877,6 +930,10 @@ public final class MainActivity extends Activity {
                 for(int i=0;i<catalog.dock.size();i++)tileSlots.put(catalog.dock.get(i),-i-1);
             }
             float scrollStrain=MotionProfile.strain(gridScroll.velocity,7f,.012f);
+            float dockCenter=docTop()+UiGeometry.DOCK_HEIGHT/2f;
+            float clipTop=gridClipTop(),clipBottom=UiGeometry.gridClipBottom(drawer.value);
+            int lastGridRow=-1;
+            float gridCenter=0f;
             for(Tile tile:catalog.all){
                 Integer slot=tileSlots.get(tile);
                 boolean dock=slot!=null&&slot<0;
@@ -884,18 +941,28 @@ public final class MainActivity extends Activity {
                 if(index<0 && !tile.exiting)continue;
                 if(tile.exiting && tile.presence.value<.001f && !tile.presence.busy()){tile.exiting=false;continue;}
                 TileNode node=tileNodes.get(tile.id);
+                if(tile.exiting)dock=tile.exitDock;
+                if(!tile.exiting&&!dock&&index/6!=lastGridRow){
+                    lastGridRow=index/6;
+                    gridCenter=UiGeometry.rowTop(lastGridRow,gridScroll.value)+UiGeometry.TILE_MAX_HEIGHT/2f+rowOffset(lastGridRow);
+                }
+                float y=tile.exiting?tile.exitY:(dock?dockCenter:gridCenter)+tile.offsetY.value;
+                boolean morphing=tile==launchingTile||tile==returningTile;
+                boolean shown=dock||tile.traveling||morphing||(y+112>=clipTop&&y-71<=clipBottom);
+                if(!shown){
+                    if(node!=null&&node.tile==tile){
+                        node.seenGeneration=generation;node.setVisibility(View.INVISIBLE);
+                    }
+                    continue;
+                }
                 if(node==null || node.tile!=tile){
                     if(node!=null)removeSceneNode(node);
                     node=new TileNode(tile);tileNodes.put(tile.id,node);attachSceneNode(node,276,UiGeometry.TILE_NODE_HEIGHT+24);
                 }
                 node.seenGeneration=generation;
-                if(tile.exiting)dock=tile.exitDock;
                 boolean labelsChanged=node.dock!=dock||tile.isEmpty()&&node.materialSlot!=index;node.dock=dock;node.materialSlot=index;
                 float x=tile.exiting?tile.exitX:UiGeometry.centerX(index%6)+tile.offsetX.value;
-                float y=tile.exiting?tile.exitY:(dock?docTop()+UiGeometry.DOCK_HEIGHT/2f:UiGeometry.rowTop(index/6,gridScroll.value)+UiGeometry.TILE_MAX_HEIGHT/2f+rowOffset(index/6))+tile.offsetY.value;
-                boolean shown=true;
-                if(!dock && !tile.traveling && (y+112<gridClipTop()||y-71>UiGeometry.gridClipBottom(drawer.value)))shown=false;
-                node.setVisibility(shown?View.VISIBLE:View.INVISIBLE);
+                node.setVisibility(View.VISIBLE);
                 boolean selected=moveMode?(dock==moveDock && index==(dock?dockFocus:gridFocus)):
                     (dock?(page==0&&!focusHeader||page==1&&focusDrawerDock)&&index==dockFocus:page==1&&!focusDrawerDock&&index==gridFocus);
                 float pushed=selected?tilePress.value:0f;
@@ -907,7 +974,7 @@ public final class MainActivity extends Activity {
                     edgeX.value,edgeY.value,edgeAnchorX,edgeAnchorY,
                     tile.offsetX.velocity,tile.offsetY.velocity,scrollStrain,
                     tile.offsetX.value,tile.offsetY.value,drawer.value,
-                    tile==launchingTile||tile==returningTile,tileTransform);
+                    morphing,tileTransform);
                 float sy=tileTransform[4];
                 // Commit each property once; intermediate base values used to
                 // dirty render nodes even when their final transform was stable.
@@ -917,11 +984,11 @@ public final class MainActivity extends Activity {
                 node.setAlpha(tileTransform[5]);
                 node.setTranslationZ(tileTransform[6]);
                 if(!dock && !tile.traveling && sy>.00001f){
-                    int top=(int)Math.max(0,71f+(gridClipTop()-y)/sy);
-                    int bottom=(int)Math.min(UiGeometry.TILE_NODE_HEIGHT,71f+(UiGeometry.gridClipBottom(drawer.value)-y)/sy);
-                    if(top==0 && bottom==UiGeometry.TILE_NODE_HEIGHT)node.setClipBounds(null);
-                    else{localTileClip.set(0,top+12,276,Math.max(top,bottom)+12);node.setClipBounds(localTileClip);}
-                }else node.setClipBounds(null);
+                    int top=(int)Math.max(0,71f+(clipTop-y)/sy);
+                    int bottom=(int)Math.min(UiGeometry.TILE_NODE_HEIGHT,71f+(clipBottom-y)/sy);
+                    if(top==0 && bottom==UiGeometry.TILE_NODE_HEIGHT)node.updateClip(-1,-1);
+                    else node.updateClip(top+12,Math.max(top,bottom)+12);
+                }else node.updateClip(-1,-1);
                 int tint=(int)tileTransform[7];
                 if(node.tint!=tint || node.label!=tile.labelAlpha.value || node.rendered!=tile.image || node.session!=tile.installSessionId || node.progress!=tile.installSweep.value || node.reveal!=tile.installReveal.value || labelsChanged){
                     node.tint=tint;node.label=tile.labelAlpha.value;node.rendered=tile.image;node.session=tile.installSessionId;node.progress=tile.installSweep.value;node.reveal=tile.installReveal.value;node.invalidate();
@@ -991,7 +1058,7 @@ public final class MainActivity extends Activity {
             }
             Menu m=menu!=null?menu:closingMenu;
             if(m!=null){RectF menuBox=menuVisualRect(m);menuBox.inset(-32,-32);if(box==null)box=menuBox;else box.union(menuBox);}
-            if(toastReveal.value>.001f){if(box==null)box=new RectF(390,890,1530,1040);else box.union(390,890,1530,1040);}
+            if(toastReveal.value>.001f){if(box==null)box=new RectF(390,890,1530,1080);else box.union(390,890,1530,1080);}
             return box==null?null:overlayBounds(box);
         }
         private Rect overlayBounds(RectF box){
@@ -1009,7 +1076,6 @@ public final class MainActivity extends Activity {
             glassMaterials.beginSurface(c);
             try{
                 if(airPlayFrameVisible){
-                    if(airPlayFrameVisible)c.translate(0,AIRPLAY_TOAST_TRAVEL*(1-airPlayToastProgress()));
                     drawToast(c);return;
                 }
                 if(menu!=null||closingMenu!=null)drawMenu(c);
@@ -1061,13 +1127,14 @@ public final class MainActivity extends Activity {
         }
         private final SpringValue toastWidth=new SpringValue(0f,420f,38f),toastChange=new SpringValue(1f,440f,38f);
         private String previousToast="";
-        private final SpringValue toastReveal=new SpringValue(0f,340f,29f);
+        private final SpringValue toastReveal=new SpringValue(0f,245f,24f);
         private final SpringValue dialogChoice=new SpringValue(0f,440f,38f);
         private final SpringValue dialogReveal=new SpringValue(0f,360f,31f);
         
         private final SpringValue radioChange=new SpringValue(1f,380f,36f);
         private int previousWifi=controls.wifi;
         private final WifiFeedback wifiFeedback=new WifiFeedback(controls.wifi);
+        private String announcedWifiName=controls.connectedWifiName;
         private final SpringValue[] headerButtonFocus={new SpringValue(0,440,34),new SpringValue(0,440,34),new SpringValue(0,440,34),new SpringValue(0,440,34)};
         private final SpringValue headerPress=new SpringValue(0,440,34);
         private boolean headerButtonsBusy(){if(headerPress.busy())return true;for(SpringValue v:headerButtonFocus)if(v.busy())return true;return false;}
@@ -1092,8 +1159,30 @@ public final class MainActivity extends Activity {
         }
         private final Runnable hideToast=()->{toastReveal.aim(0f);invalidate();};
         private void refreshControlStates(){
-            int oldWifi=controls.wifi;controls.refresh();
+            int oldWifi=controls.wifi,oldConnected=controls.connectedWifiId,oldConnecting=controls.connectingWifiId;
+            controls.refresh();
             presentWifiState(controls.wifi);
+            if(controls.wifiToggleFailed){
+                controls.wifiToggleFailed=false;
+                showToast("Wi-Fi chưa đổi trạng thái · Thử lại trong Cài đặt");
+            }
+            if(controls.wifiConnectFailed&&dialogAction==null){
+                controls.wifiConnectFailed=false;
+                if(wifiMenuOpen()&&resumed&&hasWindowFocus()){
+                    openSystemWifi("Không kết nối được Wi-Fi · Kiểm tra mật khẩu trong Cài đặt");
+                    return;
+                }
+            }
+            if(menu!=null&&menu.sourceHeader==0){
+                menu.wifiBusy.aim(controls.wifiTogglePending?1f:0f);
+                updateRadioMenu(menu,controls.wifi!=0);
+                if(oldConnected!=controls.connectedWifiId||oldConnecting!=controls.connectingWifiId)
+                    updateWifiIndicators(menu);
+                if(oldWifi!=controls.wifi||oldConnected!=controls.connectedWifiId)wifiScanDirty=true;
+                if(oldWifi==0&&controls.wifi!=0)requestWifiScan(true);
+                if(android.os.SystemClock.elapsedRealtime()-lastWifiScan>=15000)requestWifiScan(false);
+                if(wifiScanDirty&&!holdingOK&&dialogAction==null&&menu.rowPress.value<.1f)refreshWifiRows(menu);
+            }
             
             if(oldWifi!=controls.wifi){
                 previousWifi=oldWifi;radioChange.value=0;radioChange.velocity=0;radioChange.aim(1);
@@ -1103,9 +1192,12 @@ public final class MainActivity extends Activity {
         }
         private void presentWifiState(int current){
             int event=wifiFeedback.observe(current,resumed&&hasWindowFocus(),android.os.SystemClock.elapsedRealtime());
-            if(event==WifiFeedback.NONE)return;
-            showToast("Wi-Fi · "+WifiFeedback.label(event));
-
+            String name=controls.connectedWifiName;
+            boolean changed=current==2&&!name.isEmpty()&&!name.equals(announcedWifiName)&&resumed&&hasWindowFocus();
+            if(event==WifiFeedback.CONNECTED||changed){
+                announcedWifiName=name;
+                showToast(name.isEmpty()?"Đã kết nối Wi-Fi":"Đã kết nối "+name);
+            }else if(event!=WifiFeedback.NONE)showToast("Wi-Fi · "+WifiFeedback.label(event));
         }
         private final Runnable statusTick=new Runnable(){
             @Override public void run(){
@@ -1116,9 +1208,9 @@ public final class MainActivity extends Activity {
                 refreshControlStates();if(installTracker!=null)installTracker.poll();
                 if(hasWindowFocus()&&menu==null&&dialogAction==null&&updater!=null){
                     updater.checkIfDue();
-                    if(updater.shouldAnnounce())showToast("Có pdmvOS "+updater.version()+" · Nhấn giữ Cài đặt");
+                    if(updater.shouldAnnounce())showToast("Có pdmvOS "+updater.version()+" · Nhấn Cài đặt");
                 }
-                handler.postDelayed(this,2000);
+                handler.postDelayed(this,controls.wifiTogglePending?150:wifiMenuOpen()||controls.connectingWifiId>=0?500:2000);
             }
         };
         private RectF glassCaptureArea(RectF bounds){
@@ -1285,32 +1377,33 @@ public final class MainActivity extends Activity {
             });
         }
         private void drawToast(Canvas c){
-            float q=UiGeometry.clamp(toastReveal.value,0,1);if(q<.001f)return;
+            if(toastReveal.value<.001f)return;
             refreshToastBackdrop();
             // Offscreen node capture changes the material's sampling frame.
             // Rebind it to this canvas before the toast slide transform is applied.
             glassMaterials.beginSurface(c);
-            int save=q==1f?c.save():c.saveLayerAlpha(400,890,1520,1035,(int)(255*q),Canvas.ALL_SAVE_FLAG);
-            c.translate(0,24*(1-toastReveal.value));
+            int save=c.save();
+            c.translate(0,(UiGeometry.HEIGHT-TOAST_TOP)*(1-toastReveal.value));
             configureTextPaint(measurePaint,24,false);
             Paint.FontMetrics metrics=measurePaint.getFontMetrics();
             float h=Math.max(28,metrics.descent-metrics.ascent)+32;
             float w=Math.max(88,toastWidth.value);
-            material(c,960-w/2,930,w,h,h/2,4);
-            drawSolar(c,"info",960-w/2+38,930+h/2,28,accent());
+            material(c,960-w/2,TOAST_TOP,w,h,h/2,4);
+            drawSolar(c,"info",960-w/2+38,TOAST_TOP+h/2,28,accent());
             float content=UiGeometry.clamp(toastChange.value,0,1);
             float baseline=h/2-(metrics.ascent+metrics.descent)/2;
             int textWidth=Math.max(1,Math.round(w-88)),textHeight=Math.max(1,Math.round(h));
             if(!previousToast.isEmpty()&&1-content>.001f)
-                menuBitmap(c,toastLabelBitmap(previousToast,textWidth,textHeight,baseline),960-w/2+64,930,1-content);
+                menuBitmap(c,toastLabelBitmap(previousToast,textWidth,textHeight,baseline),960-w/2+64,TOAST_TOP,1-content);
             if(!toastMessage.isEmpty()&&content>.001f)
-                menuBitmap(c,toastLabelBitmap(toastMessage,textWidth,textHeight,baseline),960-w/2+64,930,content);
+                menuBitmap(c,toastLabelBitmap(toastMessage,textWidth,textHeight,baseline),960-w/2+64,TOAST_TOP,content);
             textOpacity=1f;
             c.restoreToCount(save);
         }
         private void showDialog(String title,String body,String button,Runnable action){
             clearEdgeOnContextSwitch();
-            closeMenu();holdingOK=false;pressStartedInDialog=false;handler.removeCallbacks(holdAction);settleReturnState(press,0f);
+            closeMenu();
+            holdingOK=false;pressStartedInDialog=false;handler.removeCallbacks(holdAction);settleReturnState(press,0f);
             dialogTitle=title;dialogBody=body;dialogButton=button;dialogAction=action;dialogConfirm=false;
             settleReturnState(dialogChoice,0);
             handler.removeCallbacks(finishUpdateProgress);
@@ -1394,20 +1487,17 @@ public final class MainActivity extends Activity {
             if(headerSelection==0)launchSystem(new Intent(Settings.ACTION_WIFI_SETTINGS),"Không mở được cài đặt Wi-Fi");
             
             else if(headerSelection==2)launchSystem(new Intent(android.media.tv.TvInputManager.ACTION_SETUP_INPUTS),"Hệ thống không cung cấp cài đặt đầu vào");
-            else openUpdateDialog();
+            else systemSettings();
         }
         private void activateHeader(){
             if(uiSounds!=null)uiSounds.press();
-            if(headerSelection==0){
-                refreshControlStates();
-                if(controls.wifi!=0){
-                    showDialog("Tắt Wi-Fi?", "TV sẽ ngắt kết nối với mạng Wi-Fi.", "Tắt Wi-Fi", ()->setWifi(false));
-                    destructiveDialog=true;
-                }else setWifi(true);
-            }
+            if(headerSelection==0){if(menu!=null&&menu.sourceHeader==0)closeMenu();else openWifiMenu();}
             
             else if(headerSelection==2){if(menu!=null&&menu.sourceHeader==2)closeMenu();else openInputMenu();}
-            else systemSettings();
+            else{
+                openUpdateDialog();
+                showToast("Nhấn giữ để mở cài đặt hệ thống");
+            }
             refreshControlStates();invalidate();
         }
         private void openUpdateDialog(){
@@ -1469,8 +1559,120 @@ public final class MainActivity extends Activity {
             if(updater.state()==LauncherUpdate.State.DOWNLOADING)dialogProgress=updater.progress();
         }
         private void setWifi(boolean enabled){
-            if(!controls.setWifiEnabled(enabled))showToast("Nhấn giữ để mở cài đặt Wi-Fi của hệ thống");
+            if(controls.wifiTogglePending)return;
+            if(!controls.setWifiEnabled(enabled))showToast("Mở cài đặt hệ thống để thay đổi Wi-Fi");
             refreshControlStates();
+            handler.removeCallbacks(statusTick);handler.postDelayed(statusTick,150);
+            invalidate();
+        }
+        private boolean wifiEventsRegistered,wifiScanPermissionAsked,wifiScanDirty;
+        private long lastWifiScan;
+        private final android.content.BroadcastReceiver wifiEventsReceiver=new android.content.BroadcastReceiver(){
+            @Override public void onReceive(Context context,Intent intent){
+                if(android.net.wifi.WifiManager.SCAN_RESULTS_AVAILABLE_ACTION.equals(intent.getAction())){
+                    if(wifiMenuOpen())wifiScanDirty=true;
+                }else if(intent.getIntExtra(android.net.wifi.WifiManager.EXTRA_SUPPLICANT_ERROR,-1)
+                    ==android.net.wifi.WifiManager.ERROR_AUTHENTICATING)controls.failWifiConnection();
+            }
+        };
+        private boolean wifiMenuOpen(){return menu!=null&&menu.sourceHeader==0;}
+        private void requestWifiScan(boolean prompt){
+            if(controls.wifi==0)return;
+            boolean pie=android.os.Build.VERSION.SDK_INT<=28;
+            String permission=pie?android.Manifest.permission.ACCESS_COARSE_LOCATION:android.Manifest.permission.ACCESS_FINE_LOCATION;
+            if(checkSelfPermission(permission)!=android.content.pm.PackageManager.PERMISSION_GRANTED){
+                if(prompt&&!wifiScanPermissionAsked){
+                    wifiScanPermissionAsked=true;
+                    requestPermissions(pie?new String[]{permission}:new String[]{permission,android.Manifest.permission.ACCESS_COARSE_LOCATION},WIFI_SCAN_PERMISSION);
+                }
+                return;
+            }
+            android.location.LocationManager location=getSystemService(android.location.LocationManager.class);
+            if(android.os.Build.VERSION.SDK_INT>=28&&location!=null&&!location.isLocationEnabled()){
+                if(prompt)showToast("Bật Vị trí để xem Wi-Fi xung quanh");
+                return;
+            }
+            long now=android.os.SystemClock.elapsedRealtime();
+            if(lastWifiScan==0||now-lastWifiScan>=15000){
+                lastWifiScan=now;
+                controls.scanWifi();
+                wifiScanDirty=true;
+            }
+        }
+        private void openSystemWifi(String message){
+            closeMenu();
+            if(message!=null)showToast(message);
+            launchSystem(new Intent(Settings.ACTION_WIFI_SETTINGS),"Không mở được cài đặt Wi-Fi");
+        }
+        private void selectWifi(Menu m,TvControls.NearbyWifi network){
+            if(network.connected()||(network.savedId()>=0&&network.savedId()==controls.connectedWifiId))return;
+            if(network.savedId()>=0&&controls.connectingWifiId==network.savedId())return;
+            if(network.savedId()>=0&&controls.connectWifi(network.savedId()))updateWifiIndicators(m);
+            else openSystemWifi("Chọn "+network.name()+" trong cài đặt Wi-Fi");
+        }
+        private void openWifiMenu(){
+            controls.refresh();
+            RectF button=headerRect(0);
+            Menu m=new Menu("Wi-Fi",button.centerX(),button.centerY());
+            m.sourceHeader=0;
+            settleReturnState(m.switchState,controls.wifi!=0?1f:0f);
+            m.radioEnabled=controls.wifi!=0;
+            settleReturnState(m.wifiBusy,controls.wifiTogglePending?1f:0f);
+            m.connectedWifi=controls.connectedWifiId;m.connectingWifi=controls.connectingWifiId;
+            m.add(m.radioEnabled?"Bật":"Tắt",()->setWifi(controls.wifi==0));
+            addWifiRows(m,controls.nearbyWifi());
+            settleReturnState(m.wifiHeight,menuHeight(m));
+            showMenu(m);
+            wifiScanDirty=false;
+            requestWifiScan(true);
+        }
+        private void addWifiRows(Menu m,java.util.List<TvControls.NearbyWifi> networks){
+            m.wifiNetworks=networks;
+            for(TvControls.NearbyWifi network:networks)
+                m.items.add(new Item(network.name(),"",()->selectWifi(m,network),network.savedId(),network.connected()));
+            m.add("Mở cài đặt",()->openSystemWifi(null));
+        }
+        private void refreshWifiRows(Menu m){
+            wifiScanDirty=false;
+            java.util.List<TvControls.NearbyWifi> networks=controls.nearbyWifi();
+            if(networks.equals(m.wifiNetworks))return;
+            int selected=m.selected,oldFooter=m.items.size()-1;
+            TvControls.NearbyWifi focused=selected>0&&selected<oldFooter?m.wifiNetworks.get(selected-1):null;
+            m.items.subList(1,m.items.size()).clear();
+            addWifiRows(m,networks);
+            if(oldFooter!=m.items.size()-1){
+                settleReturnState(m.wifiListMix,.65f);
+                m.wifiListMix.aim(1f);
+            }
+            if(selected==oldFooter)selected=m.items.size()-1;
+            else if(focused!=null){
+                selected=Math.min(selected,m.items.size()-1);
+                for(int i=0;i<networks.size();i++){
+                    TvControls.NearbyWifi next=networks.get(i);
+                    if(focused.name().equals(next.name())&&focused.security()==next.security()){selected=i+1;break;}
+                }
+            }
+            if(selected>=0&&!m.rowEnabled(selected))selected=0;
+            settleReturnState(m.scroll,UiGeometry.clamp(m.scroll.target,0f,m.items.size()-m.visibleRows()));
+            m.labels.clear();prepareMenu(m);
+            focusMenuRow(selected);
+            if(selected>=0)settleReturnState(menuSelection,m.rowSlot(selected,m.scroll.target));
+        }
+        private void updateWifiIndicators(Menu m){
+            if(m.connectedWifi==controls.connectedWifiId&&m.connectingWifi==controls.connectingWifiId)return;
+            if(m.statusMix.value>=.5f){
+                m.previousConnectedWifi=m.connectedWifi;m.previousConnectingWifi=m.connectingWifi;
+            }
+            m.connectedWifi=controls.connectedWifiId;m.connectingWifi=controls.connectingWifiId;
+            settleReturnState(m.statusMix,0f);m.statusMix.aim(1f);invalidate();
+        }
+        private void updateRadioMenu(Menu m,boolean enabled){
+            if(m.radioEnabled==enabled)return;
+            m.radioEnabled=enabled;
+            m.items.set(0,new Item(enabled?"Bật":"Tắt","",m.items.get(0).perform));
+            m.switchState.aim(enabled?1f:0f);
+            if(m.selected>=0&&!m.rowEnabled(m.selected))focusMenuRow(0);
+            invalidate();
         }
         private boolean popupOwnsHeaderFocus(){
             return dialogAction!=null||dialogReveal.value>.001f
@@ -1490,7 +1692,8 @@ public final class MainActivity extends Activity {
             RectF button=headerRect(2);
             Menu m=new Menu("Đầu vào",button.centerX(),button.centerY());m.sourceHeader=2;m.selected=-1;
             if(selectAirPlay)m.selected=0;
-            m.add("AirPlay",this::openAirPlayModeMenu);
+            String receiverName=AirPlayReceiver.getInstance().getReceiverName();
+            m.add("AirPlay",receiverName==null?"(Tắt)":"("+receiverName+")",this::openAirPlayModeMenu);
             for(android.media.tv.TvInputInfo input:controls.discoverInputs()){
                 String name=input.loadLabel(MainActivity.this).toString();
                 CharSequence custom=input.loadCustomLabel(MainActivity.this);if(custom!=null&&custom.length()>0)name=custom.toString();
@@ -1508,23 +1711,47 @@ public final class MainActivity extends Activity {
             Menu m=new Menu("Chế độ AirPlay",button.centerX(),button.centerY());
             m.sourceHeader=2;
             m.isAirPlayModeMenu=true;
-            int curMode=AirPlayReceiver.getInstance().getCurrentMode();
-            m.checked=curMode;
-            for(int i=0;i<AIRPLAY_MODES.length;i++){
+            AirPlayReceiver receiver=AirPlayReceiver.getInstance();
+            int curMode=receiver.getCurrentMode();
+            m.radioEnabled=curMode!=AirPlayReceiver.MODE_OFF;
+            settleReturnState(m.switchState,m.radioEnabled?1f:0f);
+            m.checked=m.radioEnabled?curMode+1:-1;
+            m.add(m.radioEnabled?"Bật":"Tắt",()->{
+                if(receiver.getCurrentMode()==AirPlayReceiver.MODE_OFF){
+                    int previous=prefs.getInt("airplay_last_active_mode",AirPlayReceiver.MODE_ALL);
+                    setAirPlayMode(Math.max(0,Math.min(previous,AirPlayReceiver.MODE_OFF-1)));
+                }else setAirPlayMode(AirPlayReceiver.MODE_OFF);
+            });
+            for(int i=0;i<AirPlayReceiver.MODE_OFF;i++){
                 int mode=i;
                 m.add(AIRPLAY_MODES[i],()->setAirPlayMode(mode));
             }
-            m.selected=curMode;
             showMenu(m);
         }
         private void setAirPlayMode(int mode){
-            if(!AirPlayReceiver.getInstance().start(MainActivity.this,mode)){
+            AirPlayReceiver receiver=AirPlayReceiver.getInstance();
+            if(!receiver.start(MainActivity.this,mode)){
+                syncAirPlayMenu();
                 showToast("AirPlay · Không thể bật");
                 return;
             }
             prefs.edit().putInt("airplay_mode",mode).apply();
+            if(mode!=AirPlayReceiver.MODE_OFF)prefs.edit().putInt("airplay_last_active_mode",mode).apply();
+            syncAirPlayMenu();
             showToast("AirPlay · "+AIRPLAY_MODES[mode]);
             invalidate();
+        }
+        private void syncAirPlayMenu(){
+            if(menu==null||!menu.isAirPlayModeMenu)return;
+            AirPlayReceiver receiver=AirPlayReceiver.getInstance();
+            int mode=receiver.getCurrentMode();
+            updateRadioMenu(menu,mode!=AirPlayReceiver.MODE_OFF);
+            int checked=mode==AirPlayReceiver.MODE_OFF?-1:mode+1;
+            if(menu.checked!=checked){
+                if(menu.statusMix.value>=.5f)menu.previousChecked=menu.checked;
+                menu.checked=checked;
+                settleReturnState(menu.statusMix,0f);menu.statusMix.aim(1f);
+            }
         }
         void updateAirPlayState(int state,int width,int height,int session){
             if(state==AirPlayReceiver.CONNECTING||state==AirPlayReceiver.PLAYING){
@@ -1919,10 +2146,15 @@ public final class MainActivity extends Activity {
                 c.scale(scale,scale,r.centerX(),r.centerY());
                 material(c,r.left,r.top,HEADER_BUTTON,HEADER_BUTTON,HEADER_BUTTON/2f,1);
                 glassMaterials.drawFocusedControl(c,r.left,r.top,HEADER_BUTTON,z,controlFocusTint[i]);
-                String icon=i==0?"wifi":i==2?"input":"settings";
-                float change=UiGeometry.clamp(radioChange.value,0,1);
-                if(i==0&&change<.999f)drawSolar(c,icon,r.centerX(),r.centerY(),29,withOpacity(headerWifiColor(previousWifi,z),1-change));
-                drawSolar(c,icon,r.centerX(),r.centerY(),29,i==0?withOpacity(headerWifiColor(controls.wifi,z),change):Color.WHITE);
+                if(i==0){
+                    float change=UiGeometry.clamp(radioChange.value,0,1);
+                    int oldColor=headerWifiColor(previousWifi,z),newColor=headerWifiColor(controls.wifi,z);
+                    int color=Color.rgb(Math.round(Color.red(oldColor)+(Color.red(newColor)-Color.red(oldColor))*change),
+                        Math.round(Color.green(oldColor)+(Color.green(newColor)-Color.green(oldColor))*change),
+                        Math.round(Color.blue(oldColor)+(Color.blue(newColor)-Color.blue(oldColor))*change));
+                    c.scale(1.18f,1.18f,r.centerX(),r.centerY());
+                    drawWifiSignal(c,r.centerX(),r.centerY(),3,color,1f);
+                }else drawSolar(c,i==2?"input":"settings",r.centerX(),r.centerY(),29,Color.WHITE);
                 glassMaterials.setLiveRims(false);c.restoreToCount(button);
             }
             c.restoreToCount(saved);
@@ -2411,7 +2643,7 @@ public final class MainActivity extends Activity {
             }
             if(code==KeyEvent.KEYCODE_DPAD_CENTER||code==KeyEvent.KEYCODE_ENTER||code==KeyEvent.KEYCODE_NUMPAD_ENTER){
                 if(event.getRepeatCount()>0){
-                    if(holdingOK&&!longPressed&&menu==null){
+                    if(holdingOK&&!longPressed&&canHoldHeaderOrTile()){
                         handler.removeCallbacks(holdAction);
                         holdAction.run();
                     }
@@ -2419,9 +2651,10 @@ public final class MainActivity extends Activity {
                 }
                 if(!holdingOK){
                     holdingOK=true;longPressed=false;
-                    pressStartedInMenu=menu!=null&&menu.selected>=0;
+                    pressStartedInMenu=menu!=null&&menu.selected>=0&&menu.rowEnabled(menu.selected);
+                    if(pressStartedInMenu)menu.pressedRow=menu.selected;
                     press.aim(1f,MotionProfile.PRESS_IN_K,MotionProfile.PRESS_IN_D);
-                    if(menu==null)handler.postDelayed(holdAction,440);
+                    if(canHoldHeaderOrTile())handler.postDelayed(holdAction,440);
                     invalidate();
                 }
                 return true;
@@ -2432,11 +2665,8 @@ public final class MainActivity extends Activity {
                 if(menu.sourceHeader>=0&&(code==KeyEvent.KEYCODE_DPAD_LEFT||code==KeyEvent.KEYCODE_DPAD_RIGHT)){
                     moveHeader(code==KeyEvent.KEYCODE_DPAD_LEFT?-1:1);return true;
                 }
-                if(code==KeyEvent.KEYCODE_DPAD_UP){
-                    int first=menu.sourceHeader>=0?-1:0;
-                    focusMenuRow(Math.max(first,menu.selected-1));return true;
-                }
-                if(code==KeyEvent.KEYCODE_DPAD_DOWN){focusMenuRow(Math.min(menu.items.size()-1,menu.selected+1));return true;}
+                if(code==KeyEvent.KEYCODE_DPAD_UP){moveMenuRow(-1);return true;}
+                if(code==KeyEvent.KEYCODE_DPAD_DOWN){moveMenuRow(1);return true;}
                 return true;
             }
             if(page==0){
@@ -2512,24 +2742,47 @@ public final class MainActivity extends Activity {
             return super.onKeyUp(code,event);
         }
         private static final class Item {
-            final String title;final Runnable perform;
-            Item(String title,Runnable perform){this.title=title;this.perform=perform;}
+            final String title,suffix;final Runnable perform;final int wifiId;final boolean connectedWifi;
+            Item(String title,String suffix,Runnable perform){this(title,suffix,perform,-1,false);}
+            Item(String title,String suffix,Runnable perform,int wifiId,boolean connectedWifi){this.title=title;this.suffix=suffix;this.perform=perform;this.wifiId=wifiId;this.connectedWifi=connectedWifi;}
         }
         private final class Menu {
-            String title;final ArrayList<Item> items=new ArrayList<>();int selected=0;
+            String title,suffix="";final ArrayList<Item> items=new ArrayList<>();int selected=0;
             float left,top;
             boolean nearTile;
             int sourceHeader=-1;
             boolean isAirPlayModeMenu;
-            int checked=-1;
+            boolean radioEnabled=true;
+            final SpringValue switchState=new SpringValue(0f,320f,28f),separator=new SpringValue(0f,380f,32f);
+            final SpringValue scroll=new SpringValue(0f,440f,39f);
+            final SpringValue wifiHeight=new SpringValue(0f,360f,37f),wifiListMix=new SpringValue(1f,380f,34f);
+            final SpringValue wifiBusy=new SpringValue(0f,420f,38f);
+            boolean radioMenu(){return isAirPlayModeMenu||sourceHeader==0;}
+            boolean rowEnabled(int row){
+                if(sourceHeader==0&&controls.wifiTogglePending)return row==items.size()-1;
+                return !radioMenu()||radioEnabled||row==0||(sourceHeader==0&&row==items.size()-1);
+            }
+            java.util.List<TvControls.NearbyWifi> wifiNetworks=java.util.Collections.emptyList();
+            int visibleRows(){return sourceHeader==0?Math.min(8,items.size()):items.size();}
+            float rowOffset(){return UiGeometry.clamp(scroll.value,0f,items.size()-visibleRows());}
+            float rowSlot(int row,float offset){
+                if(sourceHeader!=0||row<=0)return row;
+                return row==items.size()-1?visibleRows()-1:row-offset;
+            }
+            int checked=-1,previousChecked=-1;
+            int pressedRow=-1;
+            final SpringValue rowPress=new SpringValue(0f,MotionProfile.PRESS_IN_K,MotionProfile.PRESS_IN_D);
+            int connectedWifi=-1,connectingWifi=-1,previousConnectedWifi=-1,previousConnectingWifi=-1;
+            final SpringValue statusMix=new SpringValue(1f,380f,32f);
             boolean anchored(){return nearTile||sourceHeader>=0;}
             Tile sourceTile;
             final MenuMotion.Frame motion=new MenuMotion.Frame();
             Bitmap backdrop;RectF backdropArea;long backdropKey=Long.MIN_VALUE;
             final SpringValue frostMix=new SpringValue(1f,420f,38f);
-            Bitmap surface,header;final ArrayList<Bitmap> labels=new ArrayList<>();
+            Bitmap header;final ArrayList<Bitmap> labels=new ArrayList<>();
             Menu(String title,float anchorX,float anchorY){this.title=title;this.left=anchorX;this.top=anchorY;}
-            void add(String title,Runnable action){items.add(new Item(title,action));}
+            void add(String title,Runnable action){add(title,"",action);}
+            void add(String title,String suffix,Runnable action){items.add(new Item(title,suffix,action));}
         }
         private void choosePinSlot(){
             replaceSlot=dockFocus;enterDrawer(false);gridFocus=0;showToast("Chọn ứng dụng để ghim vào Dock");
@@ -2621,25 +2874,48 @@ public final class MainActivity extends Activity {
             invalidate();
         }
         private void focusMenuRow(int row){
+            if(row>=0&&!menu.rowEnabled(row))return;
             if(row>=0){
-                if(menu.selected<0)settleReturnState(menuSelection,row);
-                else menuSelection.aim(row);
+                int first=(int)menu.scroll.target;
+                if(menu.sourceHeader==0&&row>0&&row<menu.items.size()-1){
+                    if(row<=first)menu.scroll.aim(row-1);
+                    else if(row>first+menu.visibleRows()-2)menu.scroll.aim(row-menu.visibleRows()+2);
+                }
+                if(menu.sourceHeader==0&&first!=(int)menu.scroll.target)prepareWifiLabels(menu);
+                float slot=menu.rowSlot(row,menu.scroll.target);
+                if(menu.selected<0)settleReturnState(menuSelection,slot);
+                else menuSelection.aim(slot);
             }
             menu.selected=row;invalidate();
         }
+        private void moveMenuRow(int direction){
+            int first=menu.sourceHeader>=0?-1:0;
+            for(int row=menu.selected+direction;row>=first&&row<menu.items.size();row+=direction){
+                if(row<0||menu.rowEnabled(row)){focusMenuRow(row);return;}
+            }
+        }
         private void selectMenuItem(){
-            if(menu==null||menu.selected<0||(inputMenuOutgoing!=null&&inputMenuChange.value<.5f))return;
+            if(menu==null||menu.selected<0||!menu.rowEnabled(menu.selected)||(inputMenuOutgoing!=null&&inputMenuChange.value<.5f))return;
             if(uiSounds!=null)uiSounds.press();
             clearEdgeOnContextSwitch();
+            if(menu.pressedRow!=menu.selected||menu.rowPress.value<.68f)settleReturnState(menu.rowPress,.68f);
+            menu.pressedRow=menu.selected;
+            menu.rowPress.aim(0f,MotionProfile.PRESS_OUT_K,MotionProfile.PRESS_OUT_D);
             Item item=menu.items.get(menu.selected);
+            if(menu.isAirPlayModeMenu||(menu.sourceHeader==0&&menu.selected<menu.items.size()-1)){
+                item.perform.run();invalidate();return;
+            }
             closingMenu=menu;menu=null;
             menuReveal.aim(0f,closingMenu.anchored()?MenuMotion.CLOSE_K:MotionProfile.MENU_CLOSE_K,closingMenu.anchored()?MenuMotion.CLOSE_D:MotionProfile.MENU_CLOSE_D);
             menuContent.aim(0f,900f,58f);
             item.perform.run();invalidate();
         }
         private boolean sameMenu(Menu a,Menu b){
-            if(a==null||a.sourceTile!=b.sourceTile||a.sourceHeader!=b.sourceHeader||a.nearTile!=b.nearTile||!a.title.equals(b.title)||a.items.size()!=b.items.size())return false;
-            for(int i=0;i<a.items.size();i++)if(!a.items.get(i).title.equals(b.items.get(i).title))return false;
+            if(a==null||a.sourceTile!=b.sourceTile||a.sourceHeader!=b.sourceHeader||a.nearTile!=b.nearTile||!a.title.equals(b.title)||!a.suffix.equals(b.suffix)||a.items.size()!=b.items.size())return false;
+            for(int i=0;i<a.items.size();i++){
+                Item left=a.items.get(i),right=b.items.get(i);
+                if(!left.title.equals(right.title)||!left.suffix.equals(right.suffix)||left.wifiId!=right.wifiId||left.connectedWifi!=right.connectedWifi)return false;
+            }
             return true;
         }
         private void showMenu(Menu m){
@@ -2656,7 +2932,8 @@ public final class MainActivity extends Activity {
             }
             if(reversing){
                 if(m.sourceHeader<0)m.selected=Math.min(previous.selected,m.items.size()-1);
-                m.surface=previous.surface;m.header=previous.header;m.labels.addAll(previous.labels);
+                m.header=previous.header;m.labels.addAll(previous.labels);
+                if(m.sourceHeader==0)prepareWifiLabels(m);
                 if(previous.backdrop!=null&&menuRect(previous).equals(menuRect(m))){
                     m.backdrop=previous.backdrop;m.backdropArea=new RectF(previous.backdropArea);m.backdropKey=previous.backdropKey;
                 }
@@ -2687,6 +2964,9 @@ public final class MainActivity extends Activity {
             if(inputMenuOutgoing!=null)region.union(inputMenuOrigin);
             if(m.anchored()){region.union(m.left-150f,m.top-100f,m.left+150f,m.top+100f);region.inset(-24f,-24f);}
             RectF area=glassCaptureArea(region);long key=underlyingSceneKey(area);
+            if(m.sourceHeader==0&&m.wifiHeight.busy()&&m.backdrop!=null&&m.backdropArea.contains(area)){
+                glassMaterials.setMenuBackdrop(m.backdrop,m.backdropArea);return;
+            }
             if(m.backdrop==null||key!=m.backdropKey||!area.equals(m.backdropArea)){
                 m.backdrop=captureGlassRegion(area,6,0);m.backdropArea=area;m.backdropKey=key;
             }
@@ -2694,10 +2974,10 @@ public final class MainActivity extends Activity {
         }
         private int withOpacity(int color,float opacity){return (Math.round(Color.alpha(color)*opacity)<<24)|(color&0x00ffffff);}
         private float menuHeight(Menu m){
-            return UiGeometry.popupHeight(m.items.size());
+            return UiGeometry.popupHeight(m.visibleRows());
         }
         private RectF menuRect(Menu m){
-            UiGeometry.menuRect(m.items.size(),m.sourceHeader,m.nearTile,m.left,m.top,rectScratch);
+            UiGeometry.menuRect(m.visibleRows(),m.sourceHeader,m.nearTile,m.left,m.top,rectScratch);
             return new RectF(rectScratch[0],rectScratch[1],rectScratch[2],rectScratch[3]);
         }
         private MenuMotion.Frame menuMotion(Menu m,RectF target){
@@ -2721,6 +3001,8 @@ public final class MainActivity extends Activity {
         }
         private RectF menuPanelRect(Menu m){
             RectF r=menuRect(m);
+            if(m.sourceHeader==0&&m.wifiHeight.value>0f)
+                r.bottom=r.top+UiGeometry.clamp(m.wifiHeight.value,UiGeometry.popupHeight(2),UiGeometry.popupHeight(8));
             if(inputMenuOutgoing!=null){
                 float progress=UiGeometry.clamp(inputMenuChange.value,0f,1f);
                 r.top=inputMenuOrigin.top+(r.top-inputMenuOrigin.top)*progress;
@@ -2785,31 +3067,54 @@ public final class MainActivity extends Activity {
                 w*.5f,baseline,POPUP_TEXT_SIZE,ink,false,Paint.Align.CENTER);
             image.prepareToDraw();textTextures.put(key,image);return image;
         }
-        private Bitmap menuLabel(String label,float size,boolean bold,int height){
-            return menuLabel(label,size,bold,height,0f);
+        private Bitmap menuLabel(String label,String suffix,float size,boolean bold,int height,float rightPadding){
+            return menuLabel(label,suffix,size,bold,height,rightPadding,0f);
         }
-        private Bitmap menuLabel(String label,float size,boolean bold,int height,float rightPadding){
-            String key="clear|"+size+"|"+bold+"|"+label+"|"+rightPadding;
+        private Bitmap menuLabel(String label,String suffix,float size,boolean bold,int height,float rightPadding,float leftPadding){
+            String key="clear|"+size+"|"+bold+"|"+height+"|"+label+"|"+suffix+"|"+rightPadding+"|"+leftPadding;
             Bitmap cached=menuTextures.get(key);if(cached!=null)return cached;
             Bitmap image=Bitmap.createBitmap((int)MENU_WIDTH,height,Bitmap.Config.ARGB_8888);
             Canvas c=new Canvas(image);
             configureTextPaint(measurePaint,size,bold);Paint.FontMetrics fm=measurePaint.getFontMetrics();
             float baseline=bold?UiGeometry.POPUP_TITLE_INSET-fm.ascent:(MENU_ITEM_HEIGHT-fm.ascent-fm.descent)/2f;
             float inset=bold?UiGeometry.POPUP_TITLE_INSET:MENU_PAD+UiGeometry.POPUP_TEXT_PADDING;
-            drawSettingsText(c,label,inset,baseline,size,fg(),bold,MENU_WIDTH-2*inset-rightPadding);
+            float available=MENU_WIDTH-2*inset-rightPadding-leftPadding;
+            inset+=leftPadding;
+            if(suffix.isEmpty()){
+                drawSettingsText(c,label,inset,baseline,size,fg(),bold,available);
+            }else{
+                float labelWidth=measurePaint.measureText(label);
+                text(c,label,inset,baseline,size,fg(),bold,Paint.Align.LEFT);
+                float suffixOffset=labelWidth+8f;
+                drawSettingsText(c,suffix,inset+suffixOffset,baseline,size,0xffe5e7ec,false,available-suffixOffset);
+            }
             image.prepareToDraw();menuTextures.put(key,image);return image;
         }
+        private Bitmap radioOnLabel,radioOffLabel;
         private void prepareMenu(Menu m){
-            String key="clear-surface:"+m.items.size();
-            m.surface=menuTextures.get(key);
-            if(m.surface==null){
-                m.surface=Bitmap.createBitmap((int)MENU_WIDTH,(int)menuHeight(m),Bitmap.Config.ARGB_8888);
-                Canvas c=new Canvas(m.surface);
-                RectF target=menuRect(m);c.translate(-target.left,-target.top);glassMaterials.drawStaticDecoration(c,target.left,target.top,MENU_WIDTH,menuHeight(m),UiGeometry.POPUP_RADIUS,3);
-                m.surface.prepareToDraw();menuTextures.put(key,m.surface);
+            if(m.sourceHeader==0)m.wifiHeight.aim(menuHeight(m));
+            m.header=menuLabel(m.title,m.suffix,POPUP_TITLE_SIZE,true,(int)MENU_HEADER,0f);
+            if(m.radioMenu()&&radioOnLabel==null){
+                radioOnLabel=menuLabel("Bật","",POPUP_TEXT_SIZE,false,(int)MENU_ROW,72f);
+                radioOffLabel=menuLabel("Tắt","",POPUP_TEXT_SIZE,false,(int)MENU_ROW,72f);
             }
-            m.header=menuLabel(m.title,POPUP_TITLE_SIZE,true,(int)MENU_HEADER);
-            for(Item item:m.items)m.labels.add(menuLabel(item.title,POPUP_TEXT_SIZE,false,(int)MENU_ROW,m.isAirPlayModeMenu?72f:0f));
+            for(int i=0;i<m.items.size();i++){
+                boolean network=m.sourceHeader==0&&i>0&&i<m.items.size()-1;
+                m.labels.add(network?null:buildMenuRowLabel(m,i,false));
+            }
+            if(m.sourceHeader==0)prepareWifiLabels(m);
+        }
+        private Bitmap buildMenuRowLabel(Menu m,int row,boolean network){
+            Item item=m.items.get(row);
+            return menuLabel(item.title,item.suffix,POPUP_TEXT_SIZE,false,(int)MENU_ROW,m.radioMenu()?72f:0f,network?42f:0f);
+        }
+        private void prepareWifiLabels(Menu m){
+            int first=1+(int)Math.min(m.rowOffset(),m.scroll.target);
+            int last=(int)Math.ceil(Math.max(m.rowOffset(),m.scroll.target))+m.visibleRows()-1;
+            for(int i=1;i<m.items.size()-1;i++){
+                if(i<first||i>last)m.labels.set(i,null);
+                else if(m.labels.get(i)==null)m.labels.set(i,buildMenuRowLabel(m,i,true));
+            }
         }
         private void menuBitmap(Canvas c,Bitmap bitmap,float x,float y,float opacity){
             paint.reset();paint.setAntiAlias(true);paint.setFilterBitmap(true);paint.setDither(true);
@@ -2817,7 +3122,7 @@ public final class MainActivity extends Activity {
             bounds.set(x,y,x+bitmap.getWidth(),y+bitmap.getHeight());c.drawBitmap(bitmap,null,bounds,paint);
         }
         private void drawMenu(Canvas c){
-            Menu m=menu!=null?menu:closingMenu;if(m==null || m.surface==null)return;
+            Menu m=menu!=null?menu:closingMenu;if(m==null || m.header==null)return;
             float q=UiGeometry.clamp(menuReveal.value,0f,1f);if(q<.001f)return;
             refreshMenuBackdrop(m);glassMaterials.beginSurface(c);
             RectF target=menuPanelRect(m);
@@ -2840,36 +3145,184 @@ public final class MainActivity extends Activity {
             if(inputMenuOutgoing!=null){
                 c.clipRect(target.left,target.top,target.right,target.bottom-MENU_PAD);
                 float mix=UiGeometry.clamp(inputMenuChange.value,0f,1f);
-                if(mix<.5f)drawMenuRows(c,inputMenuOutgoing,target,alpha*(1f-2f*mix),inputMenuOutgoing.selected,1f,0f);
-                else drawMenuRows(c,m,target,alpha*(2f*mix-1f),menuSelection.value,menuRowEmphasis.value,0f);
+                if(mix<.5f)drawMenuRows(c,inputMenuOutgoing,target,alpha*(1f-2f*mix),inputMenuOutgoing.selected,1f);
+                else drawMenuRows(c,m,target,alpha*(2f*mix-1f),menuSelection.value,menuRowEmphasis.value);
             }else{
                 float emphasis=(m!=menu||dialogAction==null)?menuRowEmphasis.value:0f;
-                float pressed=m==menu&&pressStartedInMenu?UiGeometry.clamp(press.value,0f,1f):0f;
-                drawMenuRows(c,m,target,alpha,menuSelection.value,emphasis,pressed);
+                drawMenuRows(c,m,target,alpha,menuSelection.value,emphasis);
             }
             c.restoreToCount(popup);c.restoreToCount(transform);
         }
-        private void drawMenuRows(Canvas c,Menu m,RectF target,float alpha,float selection,float emphasis,float pressed){
+        private void drawMenuRows(Canvas c,Menu m,RectF target,float alpha,float selection,float emphasis){
             menuBitmap(c,m.header,target.left,target.top,alpha);
-            float firstRowY=target.top+MENU_HEADER;
+            float busy=m.sourceHeader==0?UiGeometry.clamp(m.wifiBusy.value,0f,1f):0f;
+            if(busy>.001f)drawWifiSpinner(c,target.right-MENU_PAD-UiGeometry.POPUP_TEXT_PADDING-17f,
+                target.top+UiGeometry.POPUP_TITLE_INSET+14f,alpha*busy);
+            float rowsTop=target.top+MENU_HEADER;
+            float footerY=target.bottom-MENU_PAD-MENU_ITEM_HEIGHT;
+            float scroll=m.rowOffset();
+            float pressed=UiGeometry.clamp(m.rowPress.value,0f,1f);
+            float firstRowY=rowsTop;
+            int viewport=c.save();
+            if(m.radioMenu()&&m.separator.value>.001f){
+                float y=firstRowY+(MENU_ITEM_HEIGHT+MENU_ROW)*.5f;
+                rect(c,target.left+MENU_PAD+UiGeometry.POPUP_TEXT_PADDING,y,target.width()-2*(MENU_PAD+UiGeometry.POPUP_TEXT_PADDING),
+                    1.5f,.75f,withOpacity(fg(),alpha*.25f*m.separator.value));
+            }
             float highlight=selection>=0f?alpha*emphasis:0f;
             if(highlight>.001f){
                 float y=firstRowY+selection*MENU_ROW;
+                if(m.sourceHeader==0&&m.wifiHeight.busy())
+                    y=m.selected==m.items.size()-1?footerY:Math.min(y,footerY);
                 int shape=c.save();
-                float pressScale=1f-.035f*pressed;
-                c.scale(pressScale,pressScale,target.centerX(),y+MENU_ITEM_HEIGHT*.5f);
+                if(pressed>0f&&m.pressedRow==m.selected){
+                    y=m.sourceHeader==0&&m.selected==m.items.size()-1
+                        ?footerY:rowsTop+m.rowSlot(m.selected,scroll)*MENU_ROW;
+                    scalePressedMenuRow(c,target,y,pressed);
+                }
                 glassMaterials.drawItem(c,target.left+MENU_PAD,y,MENU_WIDTH-2*MENU_PAD,
                     MENU_ITEM_HEIGHT,UiGeometry.POPUP_ROW_RADIUS,highlight);
                 c.restoreToCount(shape);
             }
-            for(int i=0;i<m.items.size();i++){
-                float y=firstRowY+i*MENU_ROW;
-                menuBitmap(c,m.labels.get(i),target.left,y,alpha);
-                if(i==m.checked){
-                    float checkX=target.right-MENU_PAD-UiGeometry.POPUP_TEXT_PADDING-17f;
-                    drawSolar(c,"check",checkX,y+MENU_ITEM_HEIGHT*.5f,34f,withOpacity(fg(),alpha));
-                }
+            if(m.sourceHeader==0){
+                int footer=m.items.size()-1;
+                drawMenuRow(c,m,target,0,rowsTop,alpha,pressed);
+                int clip=c.save();
+                c.clipRect(target.left,rowsTop+MENU_ROW-4f,target.right,footerY-4f);
+                int start=1+(int)scroll,end=Math.min(footer,start+m.visibleRows()-1);
+                float listAlpha=alpha*UiGeometry.clamp(m.wifiListMix.value,0f,1f);
+                for(int i=start;i<end;i++)drawMenuRow(c,m,target,i,rowsTop+m.rowSlot(i,scroll)*MENU_ROW,listAlpha,pressed);
+                c.restoreToCount(clip);
+                drawMenuRow(c,m,target,footer,footerY,alpha,pressed);
+            }else for(int i=0;i<m.items.size();i++)drawMenuRow(c,m,target,i,rowsTop+i*MENU_ROW,alpha,pressed);
+            c.restoreToCount(viewport);
+        }
+        private void scalePressedMenuRow(Canvas c,RectF target,float y,float pressed){
+            float scale=1f-.035f*pressed;
+            c.scale(scale,scale,target.centerX(),y+MENU_ITEM_HEIGHT*.5f);
+        }
+        private void drawMenuRow(Canvas c,Menu m,RectF target,int i,float y,float alpha,float pressed){
+            if(i!=m.pressedRow||pressed<=0f){
+                drawMenuRowContent(c,m,target,i,y,alpha);
+                return;
             }
+            int saved=c.save();
+            scalePressedMenuRow(c,target,y,pressed);
+            drawMenuRowContent(c,m,target,i,y,alpha);
+            c.restoreToCount(saved);
+        }
+        private void drawMenuRowContent(Canvas c,Menu m,RectF target,int i,float y,float alpha){
+            Item item=m.items.get(i);
+            float rowAlpha=m.radioMenu()&&i>0&&!(m.sourceHeader==0&&i==m.items.size()-1)
+                ?alpha*(.77f+.23f*UiGeometry.clamp(m.switchState.value,0f,1f)):alpha;
+            float edge=target.right-MENU_PAD-UiGeometry.POPUP_TEXT_PADDING,cy=y+MENU_ITEM_HEIGHT*.5f;
+            if(m.radioMenu()&&i==0){
+                float state=UiGeometry.clamp(m.switchState.value,0f,1f);
+                float rowOpacity=alpha*(1f-.48f*UiGeometry.clamp(m.wifiBusy.value,0f,1f));
+                if(state<.999f)menuBitmap(c,radioOffLabel,target.left,y,rowOpacity*(1f-state));
+                if(state>.001f)menuBitmap(c,radioOnLabel,target.left,y,rowOpacity*state);
+                drawRadioSwitch(c,edge,cy,state,rowOpacity);
+                return;
+            }
+            Bitmap label=m.labels.get(i);
+            if(label!=null)menuBitmap(c,label,target.left,y,rowAlpha);
+            if(m.sourceHeader==0&&i<m.items.size()-1)
+                drawWifiSignal(c,target.left+MENU_PAD+UiGeometry.POPUP_TEXT_PADDING+15f,cy,m.wifiNetworks.get(i-1).signal(),fg(),rowAlpha);
+            if(m.radioMenu()){
+                boolean wifi=item.wifiId>=0;
+                boolean oldCheck=i==m.previousChecked||(wifi&&item.wifiId==m.previousConnectedWifi);
+                boolean check=i==m.checked||(wifi&&item.wifiId==m.connectedWifi)
+                ||(item.connectedWifi&&m.connectedWifi<0);
+                boolean oldSpin=wifi&&item.wifiId==m.previousConnectingWifi;
+                boolean spin=wifi&&item.wifiId==m.connectingWifi;
+                float mix=UiGeometry.clamp(m.statusMix.value,0f,1f);
+                float enabled=UiGeometry.clamp(m.switchState.value,0f,1f);
+                float checkReveal=oldCheck&&check?1f:check?menuIndicatorEase((mix-.16f)/.84f)
+                    :oldCheck?1f-menuIndicatorEase(mix/.68f):0f;
+                float checkAlpha=rowAlpha*enabled*checkReveal;
+                float spinAlpha=alpha*enabled*((oldSpin?1f-mix:0f)+(spin?mix:0f));
+                if(checkAlpha>.001f)drawSolar(c,"check",edge-17f,cy,34f*(.72f+.28f*checkReveal),withOpacity(fg(),checkAlpha));
+                if(spinAlpha>.001f)drawWifiSpinner(c,edge-17f,cy,spinAlpha);
+            }else if(i==m.checked){
+                drawSolar(c,"check",edge-17f,cy,34f,withOpacity(fg(),rowAlpha));
+            }
+        }
+        private float menuIndicatorEase(float value){
+            float q=UiGeometry.clamp(value,0f,1f);
+            return q*q*(3f-2f*q);
+        }
+        private void drawRadioSwitch(Canvas c,float edge,float y,float state,float opacity){
+            float q=UiGeometry.clamp(state,0f,1f),left=edge-64f;
+            int track=Color.rgb(Math.round(170-126*q),Math.round(177-37*q),Math.round(190+58*q));
+            rect(c,left,y-16f,64f,32f,16f,withOpacity(track,opacity));
+            rect(c,left+3f+23f*q,y-13f,35f,26f,13f,withOpacity(fg(),opacity));
+        }
+        private final Paint wifiSignalPaint=new Paint(Paint.ANTI_ALIAS_FLAG);
+        private static final float WIFI_ARC_SWEEP=80f,WIFI_ARC_START=270f-WIFI_ARC_SWEEP*.5f;
+        private static final float WIFI_ARC_STROKE=3.5f,WIFI_ARC_GAP=2f,WIFI_TIP_RADIUS=6.25f;
+        private final Path wifiSignalTip=createWifiSignalTip();
+        private Path createWifiSignalTip(){
+            float angle=(float)Math.toRadians(WIFI_ARC_SWEEP*.5f);
+            float sin=(float)Math.sin(angle),cos=(float)Math.cos(angle);
+            float x=WIFI_TIP_RADIUS*sin,y=-WIFI_TIP_RADIUS*cos;
+            float shoulderX=x+1.05f*cos,shoulderY=y+1.05f*sin;
+            float r=WIFI_TIP_RADIUS;
+            Path tip=new Path();
+            tip.arcTo(-r,-r,r,r,WIFI_ARC_START,WIFI_ARC_SWEEP,true);
+            tip.quadTo(shoulderX,shoulderY,3.3f,-3.25f);
+            tip.lineTo(1.6f,-1.35f);
+            tip.quadTo(0f,.55f,-1.6f,-1.35f);
+            tip.lineTo(-3.3f,-3.25f);
+            tip.quadTo(-shoulderX,shoulderY,-x,y);
+            tip.close();
+            return tip;
+        }
+        private void drawWifiSignal(Canvas c,float x,float y,int signal,int ink,float opacity){
+            float center=y+9f;
+            wifiSignalPaint.setStrokeCap(Paint.Cap.ROUND);
+            wifiSignalPaint.setStrokeWidth(WIFI_ARC_STROKE);
+            wifiSignalPaint.setStyle(Paint.Style.STROKE);
+            for(int level=3;level>=2;level--){
+                float r=WIFI_TIP_RADIUS+WIFI_ARC_GAP+WIFI_ARC_STROKE*.5f+(level-2)*(WIFI_ARC_GAP+WIFI_ARC_STROKE);
+                wifiSignalPaint.setColor(withOpacity(level<=signal?ink:secondary(),opacity*(level<=signal?1f:.52f)));
+                c.drawArc(x-r,center-r,x+r,center+r,WIFI_ARC_START,WIFI_ARC_SWEEP,false,wifiSignalPaint);
+            }
+            wifiSignalPaint.setStyle(Paint.Style.FILL);
+            wifiSignalPaint.setColor(withOpacity(signal>0?ink:secondary(),opacity*(signal>0?1f:.52f)));
+            int saved=c.save();
+            c.translate(x,center);
+            c.drawPath(wifiSignalTip,wifiSignalPaint);
+            c.restoreToCount(saved);
+        }
+        private final Paint wifiSpinnerPaint=new Paint(Paint.ANTI_ALIAS_FLAG);
+        private boolean wifiSpinnerVisible(){
+            if(!resumed||!wifiMenuOpen())return false;
+            if(menu.wifiBusy.value>.001f)return true;
+            if(menu.connectingWifi<0)return false;
+            int first=1+(int)menu.rowOffset(),last=Math.min(menu.items.size()-1,first+menu.visibleRows()-2);
+            for(int i=first;i<last;i++)if(menu.items.get(i).wifiId==menu.connectingWifi)return true;
+            return false;
+        }
+        private final Runnable wifiSpinnerTick=new Runnable(){
+            @Override public void run(){
+                if(!wifiSpinnerVisible())return;
+                if(!motionWasActive)invalidateOverlay();
+                handler.postDelayed(this,33);
+            }
+        };
+        private final SweepGradient wifiSpinnerGradient=new SweepGradient(0,0,
+            new int[]{0xfff5f5f7,0x88f5f5f7,0x00f5f5f7,0x00f5f5f7},new float[]{0f,.43f,.85f,1f});
+        private void drawWifiSpinner(Canvas c,float x,float y,float opacity){
+            int saved=c.save();
+            c.translate(x,y);
+            c.rotate(-(android.os.SystemClock.uptimeMillis()%900L)*.4f);
+            wifiSpinnerPaint.setStyle(Paint.Style.STROKE);
+            wifiSpinnerPaint.setStrokeWidth(3.5f);
+            wifiSpinnerPaint.setStrokeCap(Paint.Cap.ROUND);
+            wifiSpinnerPaint.setShader(wifiSpinnerGradient);
+            wifiSpinnerPaint.setAlpha(Math.round(255f*opacity));
+            c.drawArc(-11f,-11f,11f,11f,0f,305f,false,wifiSpinnerPaint);
+            c.restoreToCount(saved);
         }
         boolean queueExternalLaunch(Tile tile,Runnable action){
             if(launchingTile!=null)return true;
@@ -3170,7 +3623,10 @@ public final class MainActivity extends Activity {
                 }else if(menu!=null&&menuRowAt(menu,x,y)>=0){
                     focusMenuRow(menuRowAt(menu,x,y));
                 }
-                holdingOK=true;longPressed=false;pressStartedInDialog=dialogAction!=null;pressStartedInMenu=menu!=null&&menu.selected>=0;press.aim(1f);
+                holdingOK=true;longPressed=false;pressStartedInDialog=dialogAction!=null;
+                pressStartedInMenu=!pressStartedInDialog&&menu!=null&&menuRowAt(menu,x,y)>=0;
+                if(pressStartedInMenu)menu.pressedRow=menu.selected;
+                press.aim(1f);
                 if(dialogAction==null&&menu==null)handler.postDelayed(holdAction,440);
                 invalidate();return true;
             }
@@ -3210,11 +3666,21 @@ public final class MainActivity extends Activity {
             return true;
         }
         private int menuRowAt(Menu m,float x,float y){
-            RectF rect=menuRect(m);
+            RectF rect=menuPanelRect(m);
             float offset=y-rect.top-MENU_HEADER;
-            if(x<rect.left+MENU_PAD||x>=rect.right-MENU_PAD||offset<0)return -1;
-            int row=(int)(offset/MENU_ROW);
-            return row<m.items.size()&&offset-row*MENU_ROW<MENU_ITEM_HEIGHT?row:-1;
+            if(x<rect.left+MENU_PAD||x>=rect.right-MENU_PAD||offset<0||offset>=m.visibleRows()*MENU_ROW)return -1;
+            int slot=(int)(offset/MENU_ROW);
+            int row=slot;
+            if(m.sourceHeader==0){
+                float footer=rect.bottom-MENU_PAD-MENU_ITEM_HEIGHT;
+                if(y>=footer)return y<footer+MENU_ITEM_HEIGHT?m.items.size()-1:-1;
+                else if(slot>0){
+                    offset+=m.rowOffset()*MENU_ROW;
+                    row=(int)(offset/MENU_ROW);
+                    if(row>=m.items.size()-1)return -1;
+                }
+            }
+            return row<m.items.size()&&m.rowEnabled(row)&&offset%MENU_ROW<MENU_ITEM_HEIGHT?row:-1;
         }
         private int rowAt(float y){
             int nearest=0;float distance=Float.MAX_VALUE;
