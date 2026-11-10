@@ -1861,16 +1861,12 @@ public final class MainActivity extends Activity {
         }
         private float airPlayToastProgress(){return UiGeometry.clamp(toastReveal.value,0f,1f);}
         private final class AirPlaySurface extends android.widget.FrameLayout {
-            private final Path corners=new Path();
-            private final Paint opening=new Paint(Paint.ANTI_ALIAS_FLAG);
-            private final float[] vertices=new float[266];
-            private final View videoView;
             private android.view.Surface textureSurface;
-            private float frameWidth,frameHeight,cornerRadius;
+            private float frameWidth,frameHeight;
             private int surfaceWidth,surfaceHeight;
             AirPlaySurface(){
                 super(MainActivity.this);
-                opening.setXfermode(new PorterDuffXfermode(PorterDuff.Mode.CLEAR));
+                View videoView;
                 if(android.os.Build.VERSION.SDK_INT==28
                     &&"BRAVIA_ATV3_4K".equalsIgnoreCase(android.os.Build.DEVICE)){
                     // Compose the video in the window on this BRAVIA. Its hardware
@@ -1892,14 +1888,7 @@ public final class MainActivity extends Activity {
                     });
                     videoView=texture;
                 }else{
-                    SurfaceView surface=new SurfaceView(MainActivity.this){
-                        @Override public void draw(Canvas canvas){
-                            if(!airPlayFrameVisible||!getHolder().getSurface().isValid())return;
-                            if(cornerRadius<=0f)super.draw(canvas);
-                            else canvas.drawPath(corners,opening);
-                        }
-                    };
-                    surface.setWillNotDraw(false);
+                    SurfaceView surface=new SurfaceView(MainActivity.this);
                     surface.getHolder().addCallback(new SurfaceHolder.Callback(){
                         @Override public void surfaceCreated(SurfaceHolder holder){
                             if(airPlayDisplayVisible)AirPlayReceiver.getInstance().setSurface(holder.getSurface());
@@ -1919,37 +1908,14 @@ public final class MainActivity extends Activity {
                     AirPlayReceiver.getInstance().setSurface(textureSurface);
                 }
             }
-            void updateFrame(float width,float height,float radius,float entrance){
+            void updateFrame(float width,float height,float entrance){
                 int w=getWidth(),h=getHeight();
                 setTranslationY(-(h+height)*.5f*(1f-entrance));
-                if(width==frameWidth&&height==frameHeight&&radius==cornerRadius&&w==surfaceWidth&&h==surfaceHeight)return;
-                boolean rounded=radius>0f||cornerRadius>0f;
-                frameWidth=width;frameHeight=height;cornerRadius=radius;
+                if(width==frameWidth&&height==frameHeight&&w==surfaceWidth&&h==surfaceHeight)return;
+                frameWidth=width;frameHeight=height;
                 surfaceWidth=w;surfaceHeight=h;
                 setScaleX(width/w);
                 setScaleY(height/h);
-                if(radius>0f){
-                    UiGeometry.squircleVertices(0f,0f,width,height,radius,3.05f,vertices);
-                    float sx=w/width,sy=h/height;
-                    corners.rewind();
-                    corners.moveTo(vertices[0]*sx,vertices[1]*sy);
-                    for(int i=2;i<vertices.length;i+=2)corners.lineTo(vertices[i]*sx,vertices[i+1]*sy);
-                    corners.close();
-                }
-                if(rounded){
-                    videoView.invalidate();
-                    invalidate();
-                }
-            }
-            @Override protected void dispatchDraw(Canvas canvas){
-                if(!(videoView instanceof android.view.TextureView)||cornerRadius<=0f){
-                    super.dispatchDraw(canvas);
-                    return;
-                }
-                int saved=canvas.save();
-                canvas.clipPath(corners);
-                super.dispatchDraw(canvas);
-                canvas.restoreToCount(saved);
             }
         }
         private void updateAirPlayTransform(){
@@ -1965,8 +1931,7 @@ public final class MainActivity extends Activity {
             float compact=Math.min(w/airPlayWidth,available/airPlayHeight);
             float scale=expanded+(compact-expanded)*compactProgress;
             float videoW=scale*airPlayWidth,videoH=scale*airPlayHeight;
-            float radius=Math.min(UiGeometry.TILE_RADIUS*canvasScale,Math.min(videoW,videoH)*.5f);
-            airPlaySurface.updateFrame(videoW,videoH,radius*compactProgress,airPlayEntrance.value);
+            airPlaySurface.updateFrame(videoW,videoH,airPlayEntrance.value);
         }
         private void clearToast(){
             handler.removeCallbacks(hideToast);
