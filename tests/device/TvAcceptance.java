@@ -756,11 +756,11 @@ public final class TvAcceptance extends Instrumentation {
         check((Long)main(()->field(sounds,"lastPlayed"))==beforeMenu,"menu used the app focus sound");
         check((Long)main(()->field(sounds,"lastMenuFocus"))>beforeMenu,"menu did not play keyboard focus sound");
         long menuPress=(Long)main(()->field(sounds,"lastPress"));key(23);
-        check((Long)main(()->field(sounds,"lastPress"))>menuPress,"menu selection did not play keyboard press");key(4);home();
+        check((Long)main(()->field(sounds,"lastPress"))==menuPress,"menu selection played a press sound");key(4);home();
         key(19);main(()->{set(view(),"headerSelection",3);call(view(),"updateFocus");return null;});SystemClock.sleep(150);long beforePill=(Long)main(()->field(sounds,"lastPlayed"));key(21);
         check((Long)main(()->field(sounds,"lastPlayed"))>beforePill,"pill button focus does not use app sound");
         long pillPress=(Long)main(()->field(sounds,"lastPress"));key(23);
-        check((Long)main(()->field(sounds,"lastPress"))>pillPress,"pill selection did not play keyboard press");key(4);key(20);waitMotion();
+        check((Long)main(()->field(sounds,"lastPress"))==pillPress,"pill selection played a press sound");key(4);key(20);waitMotion();
         String fixture="dev.pdmv.os.qa.fixture";
         boolean installed=false;
         try{
@@ -1159,19 +1159,19 @@ public final class TvAcceptance extends Instrumentation {
         ActivityMonitor settings=addMonitor(new IntentFilter(android.provider.Settings.ACTION_SETTINGS),new ActivityResult(Activity.RESULT_CANCELED,null),true);
         try{
             key(23);waitMotion();
-            check(settings.getHits()==0&&(Boolean)state("updateDialog")&&state("dialogAction")!=null
-                &&"Cập nhật pdmvOS".equals(state("dialogTitle")),"Settings tap must open the launcher update dialog");
-            check("Nhấn giữ để mở cài đặt hệ thống".equals(state("toastMessage")),"Settings tap is missing the hold hint");
-            screenshot("settings-short-press");
-            key(4);waitMotion();
+            check(settings.getHits()==1&&state("dialogAction")==null,"Settings tap must launch Android settings once");
+            check(!"Nhấn giữ để mở cài đặt hệ thống".equals(state("toastMessage")),"Settings tap showed the old hold hint");
             long down=SystemClock.uptimeMillis();
             injectKey(new KeyEvent(down,down,KeyEvent.ACTION_DOWN,23,0));
             SystemClock.sleep(550);
             injectKey(new KeyEvent(down,SystemClock.uptimeMillis(),KeyEvent.ACTION_UP,23,0));
             waitMotion();
-            check(settings.getHits()==1&&state("dialogAction")==null,"Settings hold must launch Android settings once");
+            check(settings.getHits()==1&&(Boolean)state("updateDialog")&&state("dialogAction")!=null
+                &&"Cập nhật pdmvOS".equals(state("dialogTitle")),"Settings hold must open the launcher update dialog");
+            screenshot("settings-long-press");
+            key(4);waitMotion();
         }finally{removeMonitor(settings);}
-        report.put("settings_short_launcher_long_system","PASS");
+        report.put("settings_short_system_long_update","PASS");
     }
     private void airPlayMenuLabels(JSONObject report)throws Exception{
         Class<?> type=Class.forName("dev.pdmv.os.AirPlayReceiver",true,activity.getClassLoader());

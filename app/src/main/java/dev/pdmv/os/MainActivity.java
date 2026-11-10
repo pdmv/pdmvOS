@@ -1489,17 +1489,14 @@ public final class MainActivity extends Activity {
             if(headerSelection==0)launchSystem(new Intent(Settings.ACTION_WIFI_SETTINGS),"Không mở được cài đặt Wi-Fi");
             
             else if(headerSelection==2)launchSystem(new Intent(android.media.tv.TvInputManager.ACTION_SETUP_INPUTS),"Hệ thống không cung cấp cài đặt đầu vào");
-            else systemSettings();
+            else openUpdateDialog();
         }
         private void activateHeader(){
             if(uiSounds!=null)uiSounds.press();
             if(headerSelection==0){if(menu!=null&&menu.sourceHeader==0)closeMenu();else openWifiMenu();}
             
             else if(headerSelection==2){if(menu!=null&&menu.sourceHeader==2)closeMenu();else openInputMenu();}
-            else{
-                openUpdateDialog();
-                showToast("Nhấn giữ để mở cài đặt hệ thống");
-            }
+            else systemSettings();
             refreshControlStates();invalidate();
         }
         private void openUpdateDialog(){

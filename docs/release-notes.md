@@ -1,7 +1,4 @@
-## pdmvOS 4.1.3
+## pdmvOS 4.1.4
 
-- Sửa lỗi khung phản chiếu iPhone bị chồng hình và xuất hiện vệt xanh khi phóng to trên Sony BRAVIA ATV3 chạy Android 9.
-- Dùng góc vuông cho khung AirPlay thu nhỏ để bỏ xử lý bo góc và khử răng cưa ở mép.
-- Dùng AVC cho phản chiếu trên Android 9 trở xuống. Khi bộ nhận loại bỏ một khung video lỗi, bộ giải mã tiếp tục từ khung đồng bộ kế tiếp.
-
-Đã thử kết nối lại và phóng to khung phản chiếu từ iPhone trên Sony BRAVIA.
+- Nhấn nút Cài đặt để mở cài đặt hệ thống. Nhấn giữ để mở cập nhật pdmvOS. Bỏ thông báo hướng dẫn thao tác cũ.
+- Tạm tắt tiếng nhấn trong menu, hộp thoại và trên các nút của pill.

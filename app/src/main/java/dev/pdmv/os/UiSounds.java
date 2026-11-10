@@ -14,6 +14,7 @@ import android.util.Log;
 final class UiSounds implements AutoCloseable {
     private static final float NAVIGATION_VOLUME = 0.8f;
     private static final float TRANSITION_VOLUME = 1.0f;
+    private static final boolean PRESS_FEEDBACK_ENABLED = false;
 
     private final Context context;
     private final Handler handler=new Handler(Looper.getMainLooper());
@@ -56,7 +57,7 @@ final class UiSounds implements AutoCloseable {
         focusStream=pool.play(id,NAVIGATION_VOLUME,NAVIGATION_VOLUME,1,0,1f);return focusStream!=0;
     }
     void press(){
-        if(closed||!ready||!enabled)return;
+        if(!PRESS_FEEDBACK_ENABLED||closed||!ready||!enabled)return;
         if(focusStream!=0){pool.stop(focusStream);focusStream=0;}
         if(pressStream!=0)pool.stop(pressStream);
         pressStream=pool.play(pressSample,NAVIGATION_VOLUME,NAVIGATION_VOLUME,3,0,1f);

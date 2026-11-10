@@ -1,5 +1,10 @@
 # Changelog
 
+## 4.1.4
+
+- Nhấn nút Cài đặt để mở cài đặt hệ thống. Nhấn giữ để mở cập nhật pdmvOS. Bỏ thông báo hướng dẫn thao tác cũ.
+- Tạm tắt tiếng nhấn trong menu, hộp thoại và trên các nút của pill.
+
 ## 4.1.3
 
 - Sửa lỗi khung phản chiếu iPhone bị chồng hình và xuất hiện vệt xanh khi phóng to trên Sony BRAVIA ATV3 chạy Android 9.
