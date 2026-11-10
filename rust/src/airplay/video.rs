@@ -200,12 +200,12 @@ struct Mirror {
 impl VideoSession for Mirror {
     fn on_video(&mut self, packet: VideoPacket) {
         const MAX_ACCESS_UNIT: usize = 4 * 1024 * 1024;
-        if packet.payload.len() > MAX_ACCESS_UNIT {
-            return;
-        }
 
         match packet.kind {
             PacketKind::AvcC | PacketKind::HvcC => {
+                if packet.payload.len() > MAX_ACCESS_UNIT {
+                    return;
+                }
                 let hevc = packet.kind == PacketKind::HvcC;
                 if let Some(config) = decoder_config(&packet.payload, hevc) {
                     let mut streams = self.streams.lock().unwrap();
@@ -237,13 +237,29 @@ impl VideoSession for Mirror {
                     let Some(config) = &video.config else { return };
                     (video.revision, config.length_size, config.hevc)
                 };
-                let Some((data, keyframe)) = prepare_access_unit(packet.payload, length_size, hevc)
-                else {
-                    return;
-                };
+                let payload_size = packet.payload.len();
+                let access_unit = (payload_size <= MAX_ACCESS_UNIT)
+                    .then(|| prepare_access_unit(packet.payload, length_size, hevc))
+                    .flatten();
                 let mut streams = self.streams.lock().unwrap();
                 let video = &mut streams.video;
                 if video.session == self.session && video.revision == revision && video.phase != 3 {
+                    let Some((data, keyframe)) = access_unit else {
+                        // A rejected frame may be a reference for later frames.
+                        // Resume at a keyframe with a fresh decoder, as for queue overflow.
+                        if !video.lost_frames {
+                            let reason = if payload_size > MAX_ACCESS_UNIT {
+                                "size limit exceeded"
+                            } else {
+                                "invalid NAL data"
+                            };
+                            super::log_message(&format!(
+                                "AirPlay video frame rejected ({payload_size} bytes): {reason}; waiting for keyframe"
+                            ));
+                        }
+                        video.lost_frames = true;
+                        return;
+                    };
                     video.queue(
                         Frame {
                             data,
@@ -456,6 +472,41 @@ mod tests {
             Some((vec![0, 0, 0, 1, 0x65, 3], true))
         );
         assert!(access_unit(&[0, 0, 0, 2, 0x65], 4, false).is_none());
+    }
+
+    #[test]
+    fn rejected_payload_resumes_at_keyframe_with_fresh_decoder() {
+        let output = Output {
+            streams: Arc::new(Mutex::new(Streams::default())),
+            audio_enabled: false,
+            hevc: false,
+        };
+        let mut mirror = output.video_init();
+        let mut send = |kind, payload| {
+            mirror.on_video(VideoPacket {
+                kind,
+                timestamp: 0,
+                payload: Bytes::from_static(payload),
+            });
+        };
+        send(
+            PacketKind::AvcC,
+            &[1, 100, 0, 40, 255, 225, 0, 2, 0x67, 1, 1, 0, 2, 0x68, 2],
+        );
+        let keyframe = &[0, 0, 0, 2, 0x65, 1];
+        send(PacketKind::Payload, keyframe);
+        let revision = output.streams.lock().unwrap().video.revision;
+        assert!(output.streams.lock().unwrap().video.pop(revision).is_some());
+
+        send(PacketKind::Payload, &[0, 0, 0, 2, 0x61]);
+        send(PacketKind::Payload, &[0, 0, 0, 2, 0x61, 2]);
+        assert!(output.streams.lock().unwrap().video.pop(revision).is_none());
+
+        send(PacketKind::Payload, keyframe);
+        let mut streams = output.streams.lock().unwrap();
+        assert_eq!(streams.video.revision, revision + 1);
+        let frame = streams.video.pop(revision + 1).unwrap();
+        assert_eq!(frame.data.as_ref(), &[0, 0, 0, 1, 0x65, 1]);
     }
 
     #[test]

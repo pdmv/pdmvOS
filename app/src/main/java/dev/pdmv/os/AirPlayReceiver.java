@@ -180,10 +180,12 @@ final class AirPlayReceiver {
     }
 
     private static boolean findHevcDecoder() {
+        // Legacy TV decoders can report HEVC support without reliable mirroring output.
+        if (android.os.Build.VERSION.SDK_INT < 29) return false;
         for (MediaCodecInfo codec : new MediaCodecList(MediaCodecList.REGULAR_CODECS).getCodecInfos()) {
             if (codec.isEncoder() || codec.getName().startsWith("OMX.google.")
                 || codec.getName().startsWith("c2.android.")) continue;
-            if (android.os.Build.VERSION.SDK_INT >= 29 && !codec.isHardwareAccelerated()) continue;
+            if (!codec.isHardwareAccelerated()) continue;
             for (String type : codec.getSupportedTypes()) {
                 if (!type.equalsIgnoreCase("video/hevc")) continue;
                 MediaCodecInfo.VideoCapabilities caps = codec.getCapabilitiesForType(type).getVideoCapabilities();

@@ -1799,15 +1799,6 @@ public final class MainActivity extends Activity {
                 addView(airPlayMatte,new ViewGroup.LayoutParams(ViewGroup.LayoutParams.MATCH_PARENT,ViewGroup.LayoutParams.MATCH_PARENT));
                 airPlaySurface=new AirPlaySurface();
                 airPlaySurface.setVisibility(View.GONE);
-                airPlaySurface.getHolder().addCallback(new SurfaceHolder.Callback(){
-                    @Override public void surfaceCreated(SurfaceHolder holder){
-                        if(airPlayDisplayVisible)AirPlayReceiver.getInstance().setSurface(holder.getSurface());
-                    }
-                    @Override public void surfaceChanged(SurfaceHolder holder,int format,int w,int h){}
-                    @Override public void surfaceDestroyed(SurfaceHolder holder){
-                        AirPlayReceiver.getInstance().setSurface(null);
-                    }
-                });
                 addView(airPlaySurface,new ViewGroup.LayoutParams(ViewGroup.LayoutParams.MATCH_PARENT,ViewGroup.LayoutParams.MATCH_PARENT));
             }
             airPlaySurface.setTranslationX(getWidth());
@@ -1869,16 +1860,64 @@ public final class MainActivity extends Activity {
             handler.postAtTime(airPlayEntranceFallback,airPlayEntranceDeadline);
         }
         private float airPlayToastProgress(){return UiGeometry.clamp(toastReveal.value,0f,1f);}
-        private final class AirPlaySurface extends SurfaceView {
+        private final class AirPlaySurface extends android.widget.FrameLayout {
             private final Path corners=new Path();
             private final Paint opening=new Paint(Paint.ANTI_ALIAS_FLAG);
             private final float[] vertices=new float[266];
+            private final View videoView;
+            private android.view.Surface textureSurface;
             private float frameWidth,frameHeight,cornerRadius;
             private int surfaceWidth,surfaceHeight;
             AirPlaySurface(){
                 super(MainActivity.this);
-                setWillNotDraw(false);
                 opening.setXfermode(new PorterDuffXfermode(PorterDuff.Mode.CLEAR));
+                if(android.os.Build.VERSION.SDK_INT==28
+                    &&"BRAVIA_ATV3_4K".equalsIgnoreCase(android.os.Build.DEVICE)){
+                    // Compose the video in the window on this BRAVIA. Its hardware
+                    // overlay can show stale pixels when the video layer is scaled.
+                    android.view.TextureView texture=new android.view.TextureView(MainActivity.this);
+                    texture.setSurfaceTextureListener(new android.view.TextureView.SurfaceTextureListener(){
+                        @Override public void onSurfaceTextureAvailable(android.graphics.SurfaceTexture source,int w,int h){
+                            textureSurface=new android.view.Surface(source);
+                            if(airPlayDisplayVisible)AirPlayReceiver.getInstance().setSurface(textureSurface);
+                        }
+                        @Override public void onSurfaceTextureSizeChanged(android.graphics.SurfaceTexture source,int w,int h){}
+                        @Override public void onSurfaceTextureUpdated(android.graphics.SurfaceTexture source){}
+                        @Override public boolean onSurfaceTextureDestroyed(android.graphics.SurfaceTexture source){
+                            AirPlayReceiver.getInstance().setSurface(null);
+                            textureSurface.release();
+                            textureSurface=null;
+                            return true;
+                        }
+                    });
+                    videoView=texture;
+                }else{
+                    SurfaceView surface=new SurfaceView(MainActivity.this){
+                        @Override public void draw(Canvas canvas){
+                            if(!airPlayFrameVisible||!getHolder().getSurface().isValid())return;
+                            if(cornerRadius<=0f)super.draw(canvas);
+                            else canvas.drawPath(corners,opening);
+                        }
+                    };
+                    surface.setWillNotDraw(false);
+                    surface.getHolder().addCallback(new SurfaceHolder.Callback(){
+                        @Override public void surfaceCreated(SurfaceHolder holder){
+                            if(airPlayDisplayVisible)AirPlayReceiver.getInstance().setSurface(holder.getSurface());
+                        }
+                        @Override public void surfaceChanged(SurfaceHolder holder,int format,int w,int h){}
+                        @Override public void surfaceDestroyed(SurfaceHolder holder){
+                            AirPlayReceiver.getInstance().setSurface(null);
+                        }
+                    });
+                    videoView=surface;
+                }
+                addView(videoView,new android.widget.FrameLayout.LayoutParams(LayoutParams.MATCH_PARENT,LayoutParams.MATCH_PARENT));
+            }
+            @Override protected void onVisibilityChanged(View changedView,int visibility){
+                super.onVisibilityChanged(changedView,visibility);
+                if(changedView==this&&visibility==View.VISIBLE&&airPlayDisplayVisible&&textureSurface!=null){
+                    AirPlayReceiver.getInstance().setSurface(textureSurface);
+                }
             }
             void updateFrame(float width,float height,float radius,float entrance){
                 int w=getWidth(),h=getHeight();
@@ -1897,18 +1936,20 @@ public final class MainActivity extends Activity {
                     for(int i=2;i<vertices.length;i+=2)corners.lineTo(vertices[i]*sx,vertices[i+1]*sy);
                     corners.close();
                 }
-                if(rounded)invalidate();
+                if(rounded){
+                    videoView.invalidate();
+                    invalidate();
+                }
             }
-            @Override public void draw(Canvas canvas){
-                // Keep the launcher opaque while the surface waits for its first frame.
-                if(!airPlayFrameVisible||!getHolder().getSurface().isValid())return;
-                if(cornerRadius<=0f){
-                    super.draw(canvas);
+            @Override protected void dispatchDraw(Canvas canvas){
+                if(!(videoView instanceof android.view.TextureView)||cornerRadius<=0f){
+                    super.dispatchDraw(canvas);
                     return;
                 }
-                // Clear the window with coverage at the edge. Video is composed
-                // below it directly from the decoder surface.
-                canvas.drawPath(corners,opening);
+                int saved=canvas.save();
+                canvas.clipPath(corners);
+                super.dispatchDraw(canvas);
+                canvas.restoreToCount(saved);
             }
         }
         private void updateAirPlayTransform(){

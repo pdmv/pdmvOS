@@ -1,5 +1,10 @@
 # Changelog
 
+## 4.1.3
+
+- Sửa lỗi khung phản chiếu iPhone bị chồng hình và xuất hiện vệt xanh khi phóng to trên Sony BRAVIA ATV3 chạy Android 9.
+- Dùng AVC cho phản chiếu trên Android 9 trở xuống. Khi bộ nhận loại bỏ một khung video lỗi, bộ giải mã tiếp tục từ khung đồng bộ kế tiếp.
+
 ## 4.1.2
 
 - Sửa lỗi livestream AirPlay đứng khi thiết bị gửi yêu cầu tua một luồng không hỗ trợ tua.
