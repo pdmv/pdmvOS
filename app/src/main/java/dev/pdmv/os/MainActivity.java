@@ -66,7 +66,7 @@ public final class MainActivity extends Activity {
             }
             public void finished(String packageName,int sessionId,boolean success){
                 if(success&&view!=null){Tile tile=catalog.lookup("app:"+packageName);
-                    if(tile!=null&&!tile.retired&&(tile.installSessionId<0||tile.installSessionId==sessionId)){tile.installCompleting=true;tile.installSweep.aim(1f);view.invalidate();}}
+                    if(tile!=null&&!tile.retired&&tile.installSessionId==sessionId){tile.installCompleting=true;tile.installSweep.aim(1f);view.invalidate();}}
             }
         });
     }
@@ -814,10 +814,11 @@ public final class MainActivity extends Activity {
             if(drawer.value>1f){drawer.value=1f;drawer.velocity=0f;}
             if(drawer.value<0f){drawer.value=0f;drawer.velocity=0f;}
             for(Tile t:catalog.all){
-                if(t.installCompleting && t.installSweep.value>=.999f && !t.installPlaceholder && t.image!=null){
+                active=t.installSweep.update(dt)|active;
+                if(t.installCompleting && t.installSessionId<0 && t.installSweep.value>=.999f){
                     t.installReveal.aim(0f);t.installCompleting=false;
                 }
-                active=t.installSweep.update(dt)|t.installReveal.update(dt)|active;
+                active=t.installReveal.update(dt)|active;
                 active=t.labelAlpha.update(dt)|active;
                 active=t.scale.update(dt)|active;
                 active=t.offsetX.update(dt)|active;
@@ -2810,7 +2811,8 @@ public final class MainActivity extends Activity {
                 }else if(!tile.retired){
                     if(tile.installSessionId!=state.sessionId){tile.installCompleting=false;tile.installSweep.velocity=0f;tile.installSweep.value=0f;}
                     tile.installSessionId=state.sessionId;tile.installProgress=state.progress;
-                    tile.installSweep.aim(state.progress);tile.installReveal.aim(1f);
+                    if(!tile.installCompleting)tile.installSweep.aim(state.progress);
+                    tile.installReveal.aim(1f);
                 }
             }
             for(InstallTracker.State state:installStates.values()){

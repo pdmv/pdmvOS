@@ -1794,7 +1794,9 @@ public final class TvAcceptance extends Instrumentation {
             await(()->(Boolean)main(()->{Object r=repo();Method m=r.getClass().getDeclaredMethod("lookup",String.class);m.setAccessible(true);Object t=m.invoke(r,"app:"+name);return t!=null&&!(Boolean)field(t,"retired")&&!(Boolean)field(t,"installPlaceholder");}),"placeholder did not merge into actual installed app");
             check(livePackage(name)==installing,"new app installation replaced the stable placeholder node");
             staged.abandon();staged.close();staged=null;own=-1;
-            await(()->(Integer)main(()->field(installing,"installSessionId"))<0,"completed install retained an overlay");
+            await(()->(Integer)main(()->field(installing,"installSessionId"))<0
+                &&(Float)main(()->field(field(installing,"installReveal"),"value"))<.001f,
+                "completed install retained an overlay");
             params.setAppPackageName("dev.pdmv.os.qa.cancelprobe");params.setAppLabel("Kiểm tra hủy");own=pi.createSession(params);
             await(()->livePackage("dev.pdmv.os.qa.cancelprobe")!=null,"cancel test session not visible");
             pi.abandonSession(own);own=-1;await(()->livePackage("dev.pdmv.os.qa.cancelprobe")==null,"canceled session left a phantom app");SystemClock.sleep(800);
