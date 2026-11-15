@@ -131,47 +131,52 @@ unsafe fn get_byte_vec(env: JNIEnv, arr: jbyteArray) -> Vec<u8> {
     buf
 }
 
+thread_local! {
+    // Keep the common wallpaper workspace on the calling thread. Larger
+    // requests get temporary storage so one unusual image cannot grow the cache.
+    static BLUR_SCRATCH: std::cell::RefCell<Vec<i32>> = const { std::cell::RefCell::new(Vec::new()) };
+}
+
 #[no_mangle]
 pub unsafe extern "system" fn Java_dev_pdmv_os_NativeCore_pixelBlurApply(
     env: JNIEnv,
     _class: jclass,
     pixels: jintArray,
-    scratch: jintArray,
     width: jint,
     height: jint,
     radius: jint,
 ) {
-    if pixels.is_null() || scratch.is_null() || width <= 0 || height <= 0 || radius < 0 {
+    if pixels.is_null() || width <= 0 || height <= 0 || radius < 0 {
         return;
     }
     let w = width as usize;
     let h = height as usize;
-    let r = radius as usize;
     let total = w.saturating_mul(h);
 
     let get_len: FnGetArrayLength = vtable_fn(env, IDX_GET_ARRAY_LENGTH);
-    if (get_len(env, pixels) as usize) < total || (get_len(env, scratch) as usize) < total {
+    if (get_len(env, pixels) as usize) < total {
         return;
     }
 
     let get_elems: FnGetIntArrayElements = vtable_fn(env, IDX_GET_INT_ARRAY_ELEMENTS);
     let rel_elems: FnReleaseIntArrayElements = vtable_fn(env, IDX_RELEASE_INT_ARRAY_ELEMENTS);
-
     let pix_ptr = get_elems(env, pixels, core::ptr::null_mut());
     if pix_ptr.is_null() {
         return;
     }
-    let scr_ptr = get_elems(env, scratch, core::ptr::null_mut());
-    if scr_ptr.is_null() {
-        rel_elems(env, pixels, pix_ptr, JNI_ABORT);
-        return;
+
+    let pixels_slice = core::slice::from_raw_parts_mut(pix_ptr, total);
+    if total <= 640 * 360 {
+        BLUR_SCRATCH.with(|scratch| {
+            let mut scratch = scratch.borrow_mut();
+            if scratch.len() < total {
+                scratch.resize(total, 0);
+            }
+            crate::blur::apply(pixels_slice, &mut scratch, w, h, radius as usize);
+        });
+    } else {
+        crate::blur::apply(pixels_slice, &mut vec![0; total], w, h, radius as usize);
     }
-
-    let pix_slice = core::slice::from_raw_parts_mut(pix_ptr, total);
-    let scr_slice = core::slice::from_raw_parts_mut(scr_ptr, total);
-    crate::blur::apply(pix_slice, scr_slice, w, h, r);
-
-    rel_elems(env, scratch, scr_ptr, JNI_ABORT);
     rel_elems(env, pixels, pix_ptr, 0);
 }
 

@@ -785,8 +785,13 @@ public final class MainActivity extends Activity {
             if(!edgeWasMoving)lastEdgeRegion=edgeRegion;
             tilePress.aim(holdingOK&&!pressStartedInMenu&&!focusHeader?1f:0f,holdingOK?MotionProfile.PRESS_IN_K:MotionProfile.PRESS_OUT_K,holdingOK?MotionProfile.PRESS_IN_D:MotionProfile.PRESS_OUT_D);
             clockPillWidth();
-            if(!shownClock.equals(clock())){previousClock=shownClock;shownClock=clock();clockChange.value=0;clockChange.velocity=0;clockChange.aim(1);}
-            clockWidth.aim(desiredClockWidth());active=clockWidth.update(dt)|clockChange.update(dt)|active;
+            String currentClock=clock();
+            if(!shownClock.equals(currentClock)){
+                previousClock=shownClock;shownClock=currentClock;
+                clockChange.value=0;clockChange.velocity=0;clockChange.aim(1);
+                clockWidth.aim(desiredClockWidth());
+            }
+            active=clockWidth.update(dt)|clockChange.update(dt)|active;
             listBlur.aim(drawer.target,drawer.target==0f?900f:110f,drawer.target==0f?60f:22f);boolean blurWasMoving=listBlur.busy();
             active=listBlur.update(dt)|active;if(blurWasMoving)invalidateScene();
             gridFirstRow=Math.max(0,Math.min(gridFirstRow,Math.max(0,(catalog.grid.size()+5)/6-UiGeometry.VISIBLE_ROWS)));gridScroll.aim(gridFirstRow);
@@ -2831,8 +2836,9 @@ public final class MainActivity extends Activity {
             if(add)scheduleArtworkWarmup();invalidate();
         }
         private void refreshPackages(boolean force){
-            if(!force&&!catalog.packagesChanged())return;
-            animateCatalogChange(catalog::refresh);scheduleArtworkWarmup();
+            Runnable refresh=catalog.pendingRefresh(force);
+            if(refresh==null)return;
+            animateCatalogChange(refresh);scheduleArtworkWarmup();
         }
         private void animateCatalogChange(Runnable change){
             HashMap<String,float[]> before=allPositions();

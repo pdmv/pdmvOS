@@ -21,7 +21,6 @@ pub(super) struct Frame {
     pub(super) data: Bytes,
     #[cfg(target_os = "android")]
     pub(super) timestamp: u64,
-    #[cfg(target_os = "android")]
     pub(super) received: Instant,
 }
 
@@ -142,7 +141,14 @@ impl Video {
             return;
         }
         let full = self.frames.len() == 72 || self.bytes + frame.data.len() > 16 * 1024 * 1024;
-        if self.lost_frames || full {
+        // If a decoder fell behind, use the next sync picture to return to live
+        // playback without dropping references inside an active GOP.
+        let stale = self.phase == 2
+            && keyframe
+            && self.frames.front().is_some_and(|oldest| {
+                frame.received.saturating_duration_since(oldest.received) >= Duration::from_millis(120)
+            });
+        if self.lost_frames || full || stale {
             // Keep the startup GOP until it can be decoded. After overflow, only
             // resume at a sync frame so dependent frames never cross the gap.
             if !keyframe {
@@ -212,6 +218,8 @@ impl VideoSession for Mirror {
                     let video = &mut streams.video;
                     if video.session == self.session && video.phase != 3 {
                         video.configure(config);
+                        #[cfg(target_os = "android")]
+                        streams.wake_video();
                     }
                 } else {
                     super::log_message(&format!(
@@ -226,7 +234,6 @@ impl VideoSession for Mirror {
                 }
                 self.received_frames += 1;
                 self.last_stamp = packet.timestamp;
-                #[cfg(target_os = "android")]
                 let received = Instant::now();
                 let (revision, length_size, hevc) = {
                     let streams = self.streams.lock().unwrap();
@@ -265,7 +272,6 @@ impl VideoSession for Mirror {
                             data,
                             #[cfg(target_os = "android")]
                             timestamp: packet.timestamp,
-                            #[cfg(target_os = "android")]
                             received,
                         },
                         keyframe,
@@ -519,7 +525,6 @@ mod tests {
             data: Bytes::from(vec![value]),
             #[cfg(target_os = "android")]
             timestamp: 0,
-            #[cfg(target_os = "android")]
             received: Instant::now(),
         };
         video.queue(frame(0), false);
@@ -535,6 +540,29 @@ mod tests {
     }
 
     #[test]
+    fn lagging_decoder_catches_up_only_at_a_sync_frame() {
+        let mut video = Video {
+            phase: 2,
+            ..Video::default()
+        };
+        let start = Instant::now();
+        let frame = |value, delay_ms| Frame {
+            data: Bytes::from(vec![value]),
+            #[cfg(target_os = "android")]
+            timestamp: 0,
+            received: start + Duration::from_millis(delay_ms),
+        };
+
+        video.queue(frame(1, 0), false);
+        video.queue(frame(2, 125), false);
+        assert_eq!(video.revision, 0);
+        video.queue(frame(3, 145), true);
+        assert!(video.pop(0).is_none());
+        assert_eq!(video.pop(1).unwrap().data.as_ref(), &[3]);
+        assert_eq!(video.bytes, 0);
+    }
+
+    #[test]
     fn replaced_surface_waits_for_a_fresh_sync_frame() {
         let mut video = Video {
             phase: 2,
@@ -544,7 +572,6 @@ mod tests {
             data: Bytes::from(vec![value]),
             #[cfg(target_os = "android")]
             timestamp: 0,
-            #[cfg(target_os = "android")]
             received: Instant::now(),
         };
         video.queue(frame(1), false);

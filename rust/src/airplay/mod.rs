@@ -26,6 +26,10 @@ struct Streams {
     audio_generation: u64,
     audio_volume_db: f32,
     audio_gain: f32,
+    #[cfg(target_os = "android")]
+    video_thread: Option<thread::Thread>,
+    #[cfg(target_os = "android")]
+    audio_thread: Option<thread::Thread>,
 }
 
 impl Default for Streams {
@@ -38,11 +42,29 @@ impl Default for Streams {
             audio_generation: 0,
             audio_volume_db: 0.0,
             audio_gain: 1.0,
+            #[cfg(target_os = "android")]
+            video_thread: None,
+            #[cfg(target_os = "android")]
+            audio_thread: None,
         }
     }
 }
 
 impl Streams {
+    #[cfg(target_os = "android")]
+    fn wake_video(&self) {
+        if let Some(thread) = &self.video_thread {
+            thread.unpark();
+        }
+    }
+
+    #[cfg(target_os = "android")]
+    fn wake_audio(&self) {
+        if let Some(thread) = &self.audio_thread {
+            thread.unpark();
+        }
+    }
+
     fn rtp_audio_active(&self) -> bool {
         self.audio_active && !self.hls.owns_audio()
     }
@@ -63,6 +85,8 @@ impl AudioHandler for Output {
             streams.audio.clear();
             streams.audio_active = true;
             streams.audio_generation = streams.audio_generation.wrapping_add(1);
+            #[cfg(target_os = "android")]
+            streams.wake_audio();
             streams.audio_generation
         });
         Box::new(Pcm {
@@ -181,6 +205,8 @@ fn stop(service: Option<Service>) {
         let _ = service.worker.join();
         #[cfg(target_os = "android")]
         {
+            service.playback.0.thread().unpark();
+            service.playback.1.thread().unpark();
             let _ = service.playback.0.join();
             let _ = service.playback.1.join();
         }
@@ -230,12 +256,9 @@ pub fn global_start(mode: i32, name: String, mac: [u8; 6], hevc: bool) -> Option
                     .mode(protocol)
                     .output_sample_rate(44100)
                     .output_max_channels(2);
-                // Android registers the LAN records below via its DNS-SD service.
-                // Restrict shairplay's built-in announcer to loopback to avoid duplicates.
+                // Android's DNS-SD service is the only publisher on the TV.
                 if cfg!(target_os = "android") {
-                    builder = builder.mdns_scope(shairplay::MdnsScope::Addrs(vec![
-                        std::net::Ipv4Addr::LOCALHOST.into(),
-                    ]));
+                    builder = builder.external_mdns();
                 }
                 if mode != 2 {
                     builder = builder
@@ -290,12 +313,10 @@ pub fn global_start(mode: i32, name: String, mac: [u8; 6], hevc: bool) -> Option
             let render = thread::Builder::new()
                 .name("pdmvos-airplay-video".into())
                 .spawn(move || {
+                    video_streams.lock().unwrap().video_thread = Some(thread::current());
                     let mut player = android::VideoPlayback::default();
                     while video_running.load(std::sync::atomic::Ordering::Acquire) {
-                        let delay = player.tick(&video_streams);
-                        if !delay.is_zero() {
-                            thread::sleep(delay);
-                        }
+                        wait_for_playback(player.tick(&video_streams));
                     }
                 });
             let render = match render {
@@ -310,12 +331,10 @@ pub fn global_start(mode: i32, name: String, mac: [u8; 6], hevc: bool) -> Option
             let audio = thread::Builder::new()
                 .name("pdmvos-airplay-audio".into())
                 .spawn(move || {
+                    audio_streams.lock().unwrap().audio_thread = Some(thread::current());
                     let mut player = android::AudioPlayback::default();
                     while playing.load(std::sync::atomic::Ordering::Acquire) {
-                        let delay = player.tick(&audio_streams);
-                        if !delay.is_zero() {
-                            thread::sleep(delay);
-                        }
+                        wait_for_playback(player.tick(&audio_streams));
                     }
                 });
             match audio {
@@ -323,6 +342,7 @@ pub fn global_start(mode: i32, name: String, mac: [u8; 6], hevc: bool) -> Option
                 Err(_) => {
                     let _ = shutdown.send(());
                     let _ = worker.join();
+                    render.thread().unpark();
                     let _ = render.join();
                     return None;
                 }
@@ -339,6 +359,15 @@ pub fn global_start(mode: i32, name: String, mac: [u8; 6], hevc: bool) -> Option
     } else {
         let _ = worker.join();
         None
+    }
+}
+
+#[cfg(target_os = "android")]
+fn wait_for_playback(delay: Option<Duration>) {
+    match delay {
+        Some(delay) if !delay.is_zero() => thread::park_timeout(delay),
+        Some(_) => {}
+        None => thread::park(),
     }
 }
 
@@ -377,6 +406,8 @@ pub fn global_hls_report(id: i32, position: i32, duration: i32, ready: i32, play
         streams.hls.report(id, position, duration, ready, playing);
         if was_hls != streams.hls.owns_audio() {
             streams.audio.clear();
+            #[cfg(target_os = "android")]
+            streams.wake_audio();
         }
     });
 }

@@ -76,6 +76,8 @@ impl HlsHandler for Handler {
             play: true,
             ..Playback::default()
         };
+        #[cfg(target_os = "android")]
+        streams.wake_audio();
         Box::new(Session {
             streams: self.0.clone(),
             id,
@@ -136,7 +138,11 @@ impl HlsSession for Session {
         self.state(|p| p.play = rate > 0.0);
     }
     fn stop(&mut self) {
-        self.state(|p| p.url = None);
+        let mut streams = self.streams.lock().unwrap();
+        if streams.hls.id == self.id && streams.hls.url.take().is_some() {
+            #[cfg(target_os = "android")]
+            streams.wake_audio();
+        }
     }
 }
 

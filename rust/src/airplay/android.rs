@@ -102,6 +102,7 @@ pub unsafe fn set_surface(env: crate::jni::JNIEnv, surface: crate::jni::jobject)
         ANativeWindow_fromSurface(env, surface)
     };
     *SURFACE.lock().unwrap() = (!window.is_null()).then(|| Arc::new(Window(window)));
+    super::with_streams(|streams| streams.wake_video());
 }
 
 struct Format(Handle);
@@ -365,12 +366,13 @@ pub(super) struct VideoPlayback {
 }
 
 impl VideoPlayback {
-    pub(super) fn tick(&mut self, streams: &Mutex<Streams>) -> Duration {
+    pub(super) fn tick(&mut self, streams: &Mutex<Streams>) -> Option<Duration> {
         if self.video(streams) {
-            return Duration::ZERO;
+            return Some(Duration::ZERO);
         }
-        let active = streams.lock().unwrap().video.can_render();
-        Duration::from_millis(if active { 2 } else { 30 })
+        let has_surface = SURFACE.lock().unwrap().is_some();
+        let active = has_surface && streams.lock().unwrap().video.can_render();
+        (active || self.codec.is_some()).then_some(Duration::from_millis(2))
     }
 
     fn video(&mut self, streams: &Mutex<Streams>) -> bool {
@@ -443,12 +445,12 @@ pub(super) struct AudioPlayback {
 }
 
 impl AudioPlayback {
-    pub(super) fn tick(&mut self, streams: &Mutex<Streams>) -> Duration {
+    pub(super) fn tick(&mut self, streams: &Mutex<Streams>) -> Option<Duration> {
         if self.audio(streams) {
-            return Duration::ZERO;
+            return Some(Duration::ZERO);
         }
         let active = streams.lock().unwrap().rtp_audio_active();
-        Duration::from_millis(if active { 3 } else { 30 })
+        (active || self.audio.is_some()).then_some(Duration::from_millis(3))
     }
 
     fn audio(&mut self, streams: &Mutex<Streams>) -> bool {

@@ -41,6 +41,9 @@ final class AirPlayReceiver {
     private final Runnable poll = this::pollStatus;
     private NsdManager discovery;
     private final ArrayList<Registration> registrations = new ArrayList<>();
+    private final ArrayList<Registration> unregistering = new ArrayList<>();
+    private Runnable pendingStart;
+    private int requestedMode = MODE_OFF;
     private int currentMode = MODE_OFF;
     private String receiverName;
     private Boolean hevcMirroring;
@@ -50,7 +53,7 @@ final class AirPlayReceiver {
 
     void setListener(Listener value) { listener = value; }
 
-    int getCurrentMode() { return currentMode; }
+    int getCurrentMode() { return requestedMode; }
 
     String getReceiverName() { return receiverName; }
 
@@ -70,17 +73,27 @@ final class AirPlayReceiver {
     }
 
     void disconnect(Context context) {
-        int mode = currentMode;
+        int mode = requestedMode;
         stop();
         start(context, mode);
     }
 
     boolean start(Context context, int mode) {
         if (mode < MODE_ALL || mode > MODE_OFF) return false;
-        if (mode == currentMode) return true;
+        if (mode == requestedMode) return true;
         stop();
         if (mode == MODE_OFF) return true;
+        requestedMode = mode;
 
+        Context app = context.getApplicationContext();
+        if (!unregistering.isEmpty()) {
+            pendingStart = () -> startService(app, mode);
+            return true;
+        }
+        return startService(app, mode);
+    }
+
+    private boolean startService(Context context, int mode) {
         byte[] id = deviceId(context);
         String name = String.format(java.util.Locale.ROOT, "pdmvOS %02X%02X", id[4] & 255, id[5] & 255);
         try {
@@ -115,12 +128,16 @@ final class AirPlayReceiver {
     }
 
     void stop() {
+        pendingStart = null;
+        requestedMode = MODE_OFF;
         main.removeCallbacks(poll);
         hls.clear();
         hls.setSurface(null);
         for (Registration registration : registrations) {
-            try { discovery.unregisterService(registration); }
-            catch (IllegalArgumentException removed) { /* Registration already ended. */ }
+            try {
+                discovery.unregisterService(registration);
+                unregistering.add(registration);
+            } catch (IllegalArgumentException removed) { /* Registration already ended. */ }
         }
         registrations.clear();
         if (currentMode != MODE_OFF) NativeCore.airplayStop();
@@ -149,16 +166,29 @@ final class AirPlayReceiver {
 
         @Override public void onRegistrationFailed(NsdServiceInfo info, int code) {
             main.post(() -> {
-                if (!registrations.remove(this)) return;
+                if (!registrations.remove(this)) {
+                    finishUnregistration();
+                    return;
+                }
                 Log.w(TAG, "Could not register " + type + ": " + code);
                 stop();
             });
         }
 
-        @Override public void onServiceUnregistered(NsdServiceInfo info) {}
+        @Override public void onServiceUnregistered(NsdServiceInfo info) {
+            main.post(this::finishUnregistration);
+        }
 
         @Override public void onUnregistrationFailed(NsdServiceInfo info, int code) {
             Log.w(TAG, "Could not unregister " + type + ": " + code);
+            main.post(this::finishUnregistration);
+        }
+
+        private void finishUnregistration() {
+            if (!unregistering.remove(this) || !unregistering.isEmpty()) return;
+            Runnable start = pendingStart;
+            pendingStart = null;
+            if (start != null) start.run();
         }
     }
 

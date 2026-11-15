@@ -20,7 +20,7 @@ public final class CheckPixelBlur {
         Random random=new Random(64);int cases=0;
         for(int w:new int[]{1,2,7,32,65})for(int h:new int[]{1,3,19})for(int r:new int[]{0,1,3,6,12}){
             int[] a=new int[w*h];for(int i=0;i<a.length;i++)a[i]=random.nextInt();int[] expected=reference(a,w,h,r);
-            PixelBlur.apply(a,new int[a.length],w,h,r);
+            PixelBlur.apply(a,w,h,r);
             if(!Arrays.equals(a,expected))throw new AssertionError("blur changed pixels "+w+"x"+h+" r="+r);cases++;
         }System.out.println("PASS: exact blur pixels across "+cases+" cases");
     }

@@ -246,6 +246,14 @@ pub(crate) fn handle_info(
     if conn.shared.video_handler.is_some() {
         let display = plist::Dictionary::from_iter([
             (
+                "width".to_string(),
+                plist::Value::Integer(config::MIRRORING_WIDTH.into()),
+            ),
+            (
+                "height".to_string(),
+                plist::Value::Integer(config::MIRRORING_HEIGHT.into()),
+            ),
+            (
                 "widthPixels".to_string(),
                 plist::Value::Integer(config::MIRRORING_WIDTH.into()),
             ),
@@ -263,7 +271,7 @@ pub(crate) fn handle_info(
             ),
             (
                 "refreshRate".to_string(),
-                plist::Value::Integer(config::MIRRORING_FPS.into()),
+                plist::Value::Real(1.0 / config::MIRRORING_FPS as f64),
             ),
             (
                 "features".to_string(),

@@ -71,6 +71,7 @@ pub struct RaopServerBuilder {
     name: String,
     bind: BindConfig,
     mdns_scope: MdnsScope,
+    external_mdns: bool,
     #[cfg(feature = "diagnostic-headers")]
     header_diagnostics: HeaderDiagnostics,
     #[cfg(feature = "ap2")]
@@ -107,6 +108,7 @@ impl RaopServerBuilder {
             name: "Shairplay".to_string(),
             bind: BindConfig::default(),
             mdns_scope: MdnsScope::default(),
+            external_mdns: false,
             #[cfg(feature = "diagnostic-headers")]
             header_diagnostics: HeaderDiagnostics::default(),
             #[cfg(feature = "ap2")]
@@ -185,6 +187,12 @@ impl RaopServerBuilder {
         self.mdns_scope = scope;
         self
     }
+    /// Leave DNS-SD registration to the caller, using records from `service_info()`.
+    pub fn external_mdns(mut self) -> Self {
+        self.external_mdns = true;
+        self
+    }
+
     /// Set the AirPlay display name. Default: "Shairplay".
     pub fn name(mut self, name: impl Into<String>) -> Self {
         self.name = name.into();
@@ -397,6 +405,7 @@ impl RaopServerBuilder {
             httpd,
             mdns: None,
             mdns_scope: self.mdns_scope,
+            external_mdns: self.external_mdns,
             bind: self.bind,
             name: self.name,
             hwaddr,
@@ -417,6 +426,7 @@ pub struct RaopServer {
     httpd: HttpServer,
     mdns: Option<MdnsService>,
     mdns_scope: MdnsScope,
+    external_mdns: bool,
     bind: BindConfig,
     name: String,
     hwaddr: Vec<u8>,
@@ -442,7 +452,7 @@ impl RaopServer {
         // Validated even when mDNS registration is skipped, so a wrong scope never
         // depends on the environment.
         let scope_plan = mdns_scope::plan(&self.mdns_scope)?;
-        let mdns_enabled = std::env::var("CI").is_err();
+        let mdns_enabled = !self.external_mdns && std::env::var("CI").is_err();
 
         let _actual_port = self.httpd.start(self.bind.port).await?;
 

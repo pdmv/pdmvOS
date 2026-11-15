@@ -70,7 +70,7 @@ final class WallpaperStore {
     private Bitmap transitionSource,transitionFrost;
     private volatile boolean closed,started;
     private volatile int generation;
-    private int optionalEpoch;
+    private volatile int optionalEpoch;
     private boolean optionalTrimmed;
     private Runnable listener;
     private int targetWidth=1920,targetHeight=1080;
@@ -167,7 +167,7 @@ final class WallpaperStore {
         if(cohort==null||closed)return;optionalCohort=null;
         worker.execute(()->{
             try{
-                Bitmap[] frames=prepareTransitions(cohort.ready,request);
+                Bitmap[] frames=prepareTransitions(cohort.ready,request,epoch);
                 main.post(()->{
                     if(closed||request!=generation||epoch!=optionalEpoch||image!=cohort.ready){for(Bitmap frame:frames)frame.recycle();return;}
                     pendingFrames=frames;pendingSource=cohort.ready;pendingFrost=cohort.frost[2];
@@ -175,7 +175,9 @@ final class WallpaperStore {
                     if(recent!=null&&recent.image.get()==cohort.ready)recent.rememberFrames(frames);
                     if(listener!=null)listener.run();
                 });
-            }catch(IOException|RuntimeException|OutOfMemoryError error){Log.w(TAG,"Optional blur frames unavailable",error);}
+            }catch(IOException|RuntimeException|OutOfMemoryError error){
+                if(!closed&&request==generation&&epoch==optionalEpoch)Log.w(TAG,"Optional blur frames unavailable",error);
+            }
         });
     }
     void replace(File uploaded,String expectedSha,Consumer<String> completed){
@@ -193,14 +195,16 @@ final class WallpaperStore {
                 }
                 StringBuilder actual=new StringBuilder();for(byte value:digest.digest())actual.append(String.format(java.util.Locale.ROOT,"%02x",value&255));
                 if(length==0||!actual.toString().equals(expectedSha))throw new IOException("Ảnh truyền lên không toàn vẹn");
-                Cohort cohort=prepare(decode(()->new FileInputStream(candidate)),request);
+                Cohort cohort=prepareBase(decode(()->new FileInputStream(candidate)),request);
                 compactCandidate(candidate,cohort.ready);
                 main.post(()->{
                     try{
                         check(request);
                         Files.move(candidate.toPath(),currentFile().toPath(),StandardCopyOption.ATOMIC_MOVE,StandardCopyOption.REPLACE_EXISTING);
                     }catch(IOException|RuntimeException error){cohort.recycle();candidate.delete();completed.accept(error.getMessage());return;}
-                    publish(cohort);completed.accept(null);
+                    publish(cohort);
+                    optionalCohort=cohort;optionalRequest=request;
+                    completed.accept(null);
                 });
             }catch(Exception|OutOfMemoryError error){
                 candidate.delete();Log.w(TAG,"Cannot import wallpaper",error);
@@ -224,11 +228,13 @@ final class WallpaperStore {
         int request=++generation;
         worker.execute(()->{
             try{
-                check(request);Cohort cohort=prepare(decode(()->context.getAssets().open("wallpapers/wallpaper.jpg")),request);
+                check(request);Cohort cohort=prepareBase(decode(()->context.getAssets().open("wallpapers/wallpaper.jpg")),request);
                 main.post(()->{
                     try{check(request);if(currentFile().exists()&&!currentFile().delete())throw new IOException("Không xóa được hình nền tùy chỉnh");}
                     catch(IOException|RuntimeException error){cohort.recycle();completed.accept(error.getMessage());return;}
-                    publish(cohort);completed.accept(null);
+                    publish(cohort);
+                    optionalCohort=cohort;optionalRequest=request;
+                    completed.accept(null);
                 });
             }catch(IOException|RuntimeException|OutOfMemoryError error){main.post(()->completed.accept("Không khôi phục được nền mặc định"));}
         });
@@ -258,13 +264,13 @@ final class WallpaperStore {
         try{
             check(request);base=resized(ready,480,270);
             int w=480,h=270,len=w*h;
-            int[] sourcePixels=new int[len],work=new int[len],scratch=new int[len];
+            int[] sourcePixels=new int[len],work=new int[len];
             base.getPixels(sourcePixels,0,w,0,0,w,h);
             int[] radii=new int[]{1,5,6};
             for(int i=0;i<3;i++){
                 check(request);
                 System.arraycopy(sourcePixels,0,work,0,len);
-                PixelBlur.apply(work,scratch,w,h,radii[i]);
+                PixelBlur.apply(work,w,h,radii[i]);
                 Bitmap out=Bitmap.createBitmap(w,h,Bitmap.Config.ARGB_8888);
                 out.setPixels(work,0,w,0,0,w,h);
                 out.setHasAlpha(false);
@@ -273,31 +279,28 @@ final class WallpaperStore {
             success=true;return result;
         }finally{if(base!=null)base.recycle();if(!success)result.recycle();}
     }
-    private Cohort prepare(Bitmap ready,int request)throws IOException{
-        Cohort result=prepareBase(ready,request);boolean success=false;
-        try{result.frames=prepareTransitions(ready,request);success=true;return result;}
-        finally{if(!success)result.recycle();}
-    }
-    private Bitmap[] prepareTransitions(Bitmap ready,int request)throws IOException{
+    private Bitmap[] prepareTransitions(Bitmap ready,int request,int epoch)throws IOException{
         Bitmap[] frames=new Bitmap[16];Bitmap sharp=null;boolean success=false;
         try{
-            check(request);sharp=resized(ready,640,360);
+            check(request);if(epoch!=optionalEpoch)throw new IOException("Optional wallpaper frames canceled");
+            sharp=resized(ready,640,360);
             int w=640,h=360,len=w*h;
-            int[] sourcePixels=new int[len],low=new int[len],high=new int[len],out=new int[len],scratch=new int[len];
+            int[] sourcePixels=new int[len],low=new int[len],high=new int[len],out=new int[len];
             sharp.getPixels(sourcePixels,0,w,0,0,w,h);
             System.arraycopy(sourcePixels,0,low,0,len);
             System.arraycopy(sourcePixels,0,high,0,len);
-            PixelBlur.apply(high,scratch,w,h,1);
+            PixelBlur.apply(high,w,h,1);
             boolean hasHigh=true;
             int level=0;
             for(int i=0;i<16;i++){
-                check(request);float radius=8f*(i+1)/16;int wanted=(int)radius;
+                check(request);if(epoch!=optionalEpoch)throw new IOException("Optional wallpaper frames canceled");
+                float radius=8f*(i+1)/16;int wanted=(int)radius;
                 while(level<wanted){
                     int[] previous=low;low=high;high=previous;
                     ++level;
                     if(level<8){
                         System.arraycopy(sourcePixels,0,high,0,len);
-                        PixelBlur.apply(high,scratch,w,h,level+1);
+                        PixelBlur.apply(high,w,h,level+1);
                         hasHigh=true;
                     }else{
                         hasHigh=false;
@@ -327,9 +330,9 @@ final class WallpaperStore {
     /** Three separable box passes; full wallpaper work runs on the preparation thread,
      * while UI captures use only a small regional bitmap. */
     static Bitmap blur(Bitmap source,int radius){
-        int w=source.getWidth(),h=source.getHeight(),d=radius*2+1;
-        int[] a=new int[w*h],b=new int[w*h];source.getPixels(a,0,w,0,0,w,h);
-        PixelBlur.apply(a,b,w,h,radius);
+        int w=source.getWidth(),h=source.getHeight();
+        int[] a=new int[w*h];source.getPixels(a,0,w,0,0,w,h);
+        PixelBlur.apply(a,w,h,radius);
         Bitmap out=Bitmap.createBitmap(w,h,Bitmap.Config.ARGB_8888);out.setPixels(a,0,w,0,0,w,h);out.setHasAlpha(false);return out;
     }
     private interface Source{InputStream open()throws IOException;}

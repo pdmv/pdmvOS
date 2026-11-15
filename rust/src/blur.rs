@@ -9,9 +9,11 @@ pub fn apply(pixels: &mut [i32], scratch: &mut [i32], width: usize, height: usiz
         return;
     }
     let diameter = radius * 2 + 1;
-    let mut divided = vec![0i32; 256 * diameter];
-    for (i, slot) in divided.iter_mut().enumerate() {
-        *slot = (i / diameter) as i32;
+    // Quotients are channel values. Fill one run per value and keep the table
+    // compact for the horizontal and vertical passes.
+    let mut divided = vec![0u8; 256 * diameter];
+    for (value, run) in divided.chunks_exact_mut(diameter).enumerate() {
+        run.fill(value as u8);
     }
 
     let w_i32 = width as isize;
@@ -34,9 +36,9 @@ pub fn apply(pixels: &mut [i32], scratch: &mut [i32], width: usize, height: usiz
             }
             for x in 0..width {
                 scratch[row + x] = (0xff00_0000u32 as i32)
-                    | (divided[red] << 16)
-                    | (divided[green] << 8)
-                    | divided[blue];
+                    | (i32::from(divided[red]) << 16)
+                    | (i32::from(divided[green]) << 8)
+                    | i32::from(divided[blue]);
                 let before_x = if x > radius { x - radius } else { 0 };
                 let next_x = if x + radius + 1 < width {
                     x + radius + 1
@@ -75,9 +77,9 @@ pub fn apply(pixels: &mut [i32], scratch: &mut [i32], width: usize, height: usiz
                 .zip(leaving)
             {
                 *pixel = (0xff00_0000u32 as i32)
-                    | (divided[sum[0]] << 16)
-                    | (divided[sum[1]] << 8)
-                    | divided[sum[2]];
+                    | (i32::from(divided[sum[0]]) << 16)
+                    | (i32::from(divided[sum[1]]) << 8)
+                    | i32::from(divided[sum[2]]);
                 sum[0] = sum[0] + ((add >> 16) & 255) as usize - ((remove >> 16) & 255) as usize;
                 sum[1] = sum[1] + ((add >> 8) & 255) as usize - ((remove >> 8) & 255) as usize;
                 sum[2] = sum[2] + (add & 255) as usize - (remove & 255) as usize;

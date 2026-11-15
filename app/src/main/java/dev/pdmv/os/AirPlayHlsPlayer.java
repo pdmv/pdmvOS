@@ -127,7 +127,7 @@ final class AirPlayHlsPlayer {
                 width = mp.getVideoWidth();
                 height = mp.getVideoHeight();
                 if (seekPosition != 0) seek();
-                main.removeCallbacks(startupTimeout);
+                if (!shouldPlay) main.removeCallbacks(startupTimeout);
                 applyRate();
                 Log.i("AirPlayReceiver", "HLS prepared " + width + "x" + height);
             });
@@ -181,7 +181,10 @@ final class AirPlayHlsPlayer {
         if (!prepared || shouldPlay == playingRequested) return;
         if (shouldPlay) {
             player.start();
-            if (state == AirPlayReceiver.CONNECTING) main.postDelayed(startupTimeout, START_TIMEOUT_MS);
+            if (state == AirPlayReceiver.CONNECTING) {
+                main.removeCallbacks(startupTimeout);
+                main.postDelayed(startupTimeout, START_TIMEOUT_MS);
+            }
         } else {
             player.pause();
             main.removeCallbacks(startupTimeout);

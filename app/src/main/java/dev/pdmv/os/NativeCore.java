@@ -8,7 +8,7 @@ final class NativeCore {
 
     private NativeCore() {}
 
-    static native void pixelBlurApply(int[] pixels, int[] scratch, int width, int height, int radius);
+    static native void pixelBlurApply(int[] pixels, int width, int height, int radius);
     static native void pixelBlurBlend(int[] low, int[] high, int[] out, int length, int alpha);
 
     static native int artworkFallbackTextColor(int backgroundArgb);

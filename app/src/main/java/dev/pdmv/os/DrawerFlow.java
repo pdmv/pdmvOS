@@ -6,6 +6,8 @@ final class DrawerFlow {
     final SpringValue[] rows={new SpringValue(0f,650f,43f),new SpringValue(0f,650f,43f),new SpringValue(0f,650f,43f)};
     private final float[] state=new float[8];
     boolean update(float target,float elapsed){
+        if(dock.value==target&&rows[0].value==target&&rows[1].value==target
+            &&rows[2].value==target&&!busy())return false;
         // Clear the lower rows before the dock descends into their space.
         // Change only coupling: every mass retains its velocity on reversal.
         state[0]=dock.value;state[1]=dock.velocity;

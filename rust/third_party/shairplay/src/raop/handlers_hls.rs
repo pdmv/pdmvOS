@@ -50,6 +50,7 @@ struct Playback {
     prefer_high_quality: bool,
     start: f32,
     start_fraction: Option<f32>,
+    created: Instant,
     rate: f32,
     path: String,
     port: u16,
@@ -145,7 +146,11 @@ pub(crate) fn dispatch(
             } = &mut *state;
             if let Some(play) = active
                 .as_mut()
-                .filter(|p| p.peer == peer && p.session_id == session_id)
+                .filter(|p| {
+                    p.peer == peer
+                        && (p.session_id == session_id
+                            || (session_id.is_empty() && p.reverse_connection.is_none()))
+                })
             {
                 play.reverse_connection = Some(conn.nonce.clone());
                 if let Some((_, url, _)) = play.requested.take() {
@@ -176,19 +181,14 @@ pub(crate) fn dispatch(
                 return Some(error(400, "Bad Request"));
             };
             let (start, start_fraction) = start_position(&dict);
-            let direct = location.starts_with("https://");
+            let Some(direct) = playback_route(location) else {
+                return Some(error(415, "Unsupported Media Type"));
+            };
             let reverse = state
                 .reverse
                 .get(&session_key)
                 .or_else(|| state.reverse.get(&(peer, String::new())))
                 .cloned();
-            if !direct
-                && (!location.contains("/master.m3u8")
-                    || session_id.is_empty()
-                    || reverse.is_none())
-            {
-                return Some(error(415, "Unsupported Media Type"));
-            }
             state.active = None;
             let mut play = Playback {
                 peer,
@@ -198,6 +198,7 @@ pub(crate) fn dispatch(
                 prefer_high_quality: string(&dict, "clientProcName") == Some("YouTube"),
                 start,
                 start_fraction,
+                created: Instant::now(),
                 rate: 1.0,
                 path: format!("/pdmvos-hls/{}/", conn.nonce),
                 port: conn.hls_port,
@@ -212,11 +213,9 @@ pub(crate) fn dispatch(
             } else {
                 play.resources.push(location.into());
                 play.pending.push_back(location.into());
-                if !request_playlist(
-                    &mut state.request_id,
-                    &mut play,
-                    reverse.as_ref().map(|channel| &channel.sender),
-                ) {
+                if reverse.as_ref().is_some_and(|channel| {
+                    !request_playlist(&mut state.request_id, &mut play, Some(&channel.sender))
+                }) {
                     return Some(error(503, "Service Unavailable"));
                 }
             }
@@ -281,6 +280,14 @@ pub(crate) fn dispatch(
                 return Some(error(400, "Bad Request"));
             };
             let reverse = play.reverse_sender(reverse);
+            if play.player.is_none()
+                && play.reverse_connection.is_none()
+                && play.created.elapsed() >= PLAYLIST_TIMEOUT
+            {
+                tracing::warn!("AirPlay video timed out waiting for a reverse channel");
+                *active = None;
+                return Some(error(503, "Service Unavailable"));
+            }
             if play
                 .requested
                 .as_ref()
@@ -501,6 +508,20 @@ fn query(url: &str, key: &str) -> Option<f32> {
         .parse::<f32>()
         .ok()?;
     value.is_finite().then_some(value)
+}
+
+// HTTPS is fetched by Android. The sender supplies playlists for mlhls over PTTH.
+fn playback_route(location: &str) -> Option<bool> {
+    let (scheme, address) = location.split_once("://")?;
+    let authority = address.split(['/', '?', '#']).next()?;
+    if authority.is_empty() {
+        return None;
+    }
+    match scheme {
+        "https" => Some(true),
+        "mlhls" => Some(false),
+        _ => None,
+    }
 }
 
 fn valid_location(url: &str) -> bool {
@@ -840,6 +861,14 @@ mod tests {
     use super::*;
 
     #[test]
+    fn native_video_routes_by_scheme_instead_of_playlist_name() {
+        assert_eq!(playback_route("mlhls://sender/live/index.m3u8"), Some(false));
+        assert_eq!(playback_route("https://media.example/movie.mp4"), Some(true));
+        assert_eq!(playback_route("file:///tmp/video"), None);
+        assert_eq!(playback_route("mlhls:///index.m3u8"), None);
+    }
+
+    #[test]
     fn legacy_play_parameters_use_fraction_and_modern_seconds_take_priority() {
         let mut dict = play_parameters(
             b"Content-Location: https://media.example/movie.m3u8\r\nStart-Position: 0.25\r\n",
@@ -878,6 +907,7 @@ mod tests {
             prefer_high_quality: false,
             start: 0.0,
             start_fraction: None,
+            created: Instant::now(),
             rate: 1.0,
             path: "/pdmvos-hls/test/".into(),
             port: 1234,

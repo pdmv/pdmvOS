@@ -15,6 +15,7 @@ final class TileRepository {
     private static final String TAG="pdmvOS.Catalog";
     private final Context context;
     private final SharedPreferences prefs;
+    private Map<String,Long> packageRevisions=Collections.emptyMap();
     final ArrayList<Tile> dock=new ArrayList<>();
     final ArrayList<Tile> grid=new ArrayList<>();
     final ArrayList<Tile> all=new ArrayList<>();
@@ -22,7 +23,19 @@ final class TileRepository {
         this.context=context;this.prefs=prefs;refresh();
     }
     private Tile shortcut(String id,String label){return new Tile(id,label);}
-    void refresh(){
+    void refresh(){refresh(readPackageRevisions());}
+    Runnable pendingRefresh(boolean force){
+        Map<String,Long> revisions=readPackageRevisions();
+        if(!force&&revisions.equals(packageRevisions))return null;
+        return ()->refresh(revisions);
+    }
+    private Map<String,Long> readPackageRevisions(){
+        Map<String,Long> revisions=new HashMap<>();
+        for(PackageInfo info:context.getPackageManager().getInstalledPackages(0))
+            revisions.put(info.packageName,info.lastUpdateTime);
+        return revisions;
+    }
+    private void refresh(Map<String,Long> revisions){
         final PackageManager pm=context.getPackageManager();
         HashMap<String,Tile> previous=new HashMap<>();
         for(Tile tile:all)previous.putIfAbsent(tile.id,tile);
@@ -43,7 +56,8 @@ final class TileRepository {
                 try{label=r.loadLabel(pm);}catch(Throwable labelError){label=name;}
                 String title=label==null?name:label.toString();
                 Tile tile=previous.get("app:"+name);if(tile==null)tile=new Tile("app:"+name,title);
-                long revision=pm.getPackageInfo(name,0).lastUpdateTime;
+                Long knownRevision=revisions.get(name);
+                long revision=knownRevision!=null?knownRevision:pm.getPackageInfo(name,0).lastUpdateTime;
                 boolean reload=tile.packageRevision!=revision||(!tile.preparationAttempted&&tile.artwork==null)||!tile.label.equals(title);
                 tile.label=title;tile.packageName=name;tile.retired=false;tile.installPlaceholder=false;
                 tile.packageRevision=revision;tile.presence.aim(1f);
@@ -91,17 +105,9 @@ final class TileRepository {
         fillEmptySlots();
         refreshGrid();
         if(removed)prefs.edit().putString("dock",join(dock)).putString("grid_order",join(grid)).apply();
-        packageMarker=computePackageMarker();
+        packageRevisions=revisions;
         Log.i(TAG,"slots=6 dock="+join(dock)+" grid="+join(grid));
     }
-    private int packageMarker=-1;
-    private int computePackageMarker(){
-        int marker=0;
-        for(PackageInfo info:context.getPackageManager().getInstalledPackages(0))marker+=31*info.packageName.hashCode()+Long.valueOf(info.lastUpdateTime).hashCode();
-        return marker;
-    }
-    boolean packagesChanged(){return packageMarker!=computePackageMarker();}
-    boolean refreshIfPackageChanged(){if(!packagesChanged())return false;refresh();return true;}
     Tile lookup(String id){
         Tile retired=null;for(Tile tile:all)if(tile.id.equals(id)){if(!tile.retired)return tile;retired=tile;}return retired;
     }
@@ -125,8 +131,9 @@ final class TileRepository {
         dock.clear();
         for(int i=0;i<6;i++)dock.add(state.dock.get(i)==null?lookup("empty:"+i):state.dock.get(i));
         grid.clear();grid.addAll(state.grid);
-        prefs.edit().putString("dock",join(dock)).putString("grid_order",join(grid)).apply();
-        Log.i(TAG,"slots=6 dock="+join(dock)+" grid="+join(grid));
+        String dockOrder=join(dock),gridOrder=join(grid);
+        prefs.edit().putString("dock",dockOrder).putString("grid_order",gridOrder).apply();
+        Log.i(TAG,"slots=6 dock="+dockOrder+" grid="+gridOrder);
     }
     boolean unpin(int slot){SlotLayout<Tile> s=layout();if(!s.unpin(slot))return false;apply(s);return true;}
     boolean pin(Tile tile){
