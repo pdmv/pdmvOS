@@ -1801,6 +1801,7 @@ public final class MainActivity extends Activity {
                 airPlayMatte.setVisibility(View.GONE);
                 addView(airPlayMatte,new ViewGroup.LayoutParams(ViewGroup.LayoutParams.MATCH_PARENT,ViewGroup.LayoutParams.MATCH_PARENT));
                 airPlaySurface=new AirPlaySurface();
+                airPlaySurface.setKeepScreenOn(true);
                 airPlaySurface.setVisibility(View.GONE);
                 addView(airPlaySurface,new ViewGroup.LayoutParams(ViewGroup.LayoutParams.MATCH_PARENT,ViewGroup.LayoutParams.MATCH_PARENT));
             }

@@ -1,5 +1,9 @@
 # Changelog
 
+## 4.1.8
+
+- Giữ màn hình TV sáng và ngăn trình bảo vệ màn hình khi AirPlay đang hiển thị. Khi thoát AirPlay, TV trở lại chế độ chờ theo cài đặt hệ thống.
+
 ## 4.1.7
 
 - AirPlay giữ độ phân giải phản chiếu 1080p và hỗ trợ tối đa 60 fps. Khi một khung đã quá trễ, bộ nhận chỉ bỏ khung để bắt kịp nếu đã có khung mới hơn được giải mã và sẵn sàng hiển thị.
