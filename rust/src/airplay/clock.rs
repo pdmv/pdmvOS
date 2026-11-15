@@ -4,6 +4,11 @@ pub(super) const BUFFER_US: u64 = 55_000;
 const REBASE_US: u64 = 160_000;
 const MAX_JITTER_US: u64 = 80_000;
 const DECODE_HEADROOM_US: u64 = 12_000;
+pub(super) const LATE_US: u64 = 100_000;
+
+pub(super) fn can_replace_picture(now: u64, deadline: u64, next_deadline: u64) -> bool {
+    now.saturating_sub(deadline) >= LATE_US && next_deadline > deadline && next_deadline <= now
+}
 
 #[derive(Default)]
 pub(super) struct VideoClock {
@@ -66,6 +71,14 @@ mod tests {
 
     fn stamp(ms: u64) -> u64 {
         (ms << 32) / 1000
+    }
+
+    #[test]
+    fn stale_picture_requires_a_newer_due_replacement() {
+        assert!(can_replace_picture(220_000, 100_000, 133_000));
+        assert!(!can_replace_picture(220_000, 100_000, 240_000));
+        assert!(!can_replace_picture(220_000, 100_000, 100_000));
+        assert!(!can_replace_picture(155_000, 100_000, 133_000));
     }
 
     #[test]

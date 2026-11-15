@@ -1,5 +1,6 @@
 //! Android's platform codecs and audio sink, driven by the Rust receiver thread.
 
+use std::collections::VecDeque;
 use std::ffi::{c_char, c_void, CStr};
 use std::ptr::null_mut;
 use std::sync::{Arc, Mutex};
@@ -132,6 +133,36 @@ impl Format {
     }
 }
 
+#[derive(Default)]
+struct VideoTiming {
+    inflight: VecDeque<(u64, Instant)>,
+    queue_us: u64,
+    decode_us: u64,
+    queued: u64,
+    decoded: u64,
+}
+
+impl VideoTiming {
+    fn submitted(&mut self, deadline: u64, received: Instant, queued: Instant) {
+        self.queue_us += queued.saturating_duration_since(received).as_micros() as u64;
+        self.queued += 1;
+        // Bound measurement state when a codec discards outputs internally.
+        if self.inflight.len() == 64 {
+            self.inflight.pop_front();
+        }
+        self.inflight.push_back((deadline, queued));
+    }
+
+    fn output(&mut self, deadline: u64) {
+        if let Some(index) = self.inflight.iter().position(|(time, _)| *time == deadline) {
+            if let Some((_, queued)) = self.inflight.remove(index) {
+                self.decode_us += queued.elapsed().as_micros() as u64;
+                self.decoded += 1;
+            }
+        }
+    }
+}
+
 struct Codec {
     handle: Handle,
     window: Arc<Window>,
@@ -139,10 +170,11 @@ struct Codec {
     input: Option<usize>,
     dimensions: (i32, i32),
     dimensions_from_stream: bool,
+    reported_dimensions: Option<(i32, i32)>,
+    timing: VideoTiming,
     clock: Instant,
     playout: VideoClock,
     output: Option<(usize, u64)>,
-    newest_input: u64,
     presented: u64,
     skipped: u64,
 }
@@ -152,6 +184,15 @@ impl Drop for Codec {
             log_message(&format!(
                 "AirPlay playout: {} presented, {} skipped late",
                 self.presented, self.skipped
+            ));
+        }
+        if self.timing.queued != 0 && self.timing.decoded != 0 {
+            log_message(&format!(
+                "AirPlay timing: queue avg {} ms ({}), codec output avg {} ms ({})",
+                self.timing.queue_us / self.timing.queued / 1000,
+                self.timing.queued,
+                self.timing.decode_us / self.timing.decoded / 1000,
+                self.timing.decoded
             ));
         }
         unsafe {
@@ -178,10 +219,11 @@ impl Codec {
                 input: None,
                 dimensions: config.dimensions.unwrap_or((1920, 1080)),
                 dimensions_from_stream: config.dimensions.is_some(),
+                reported_dimensions: None,
+                timing: VideoTiming::default(),
                 clock: Instant::now(),
                 playout: VideoClock::default(),
                 output: None,
-                newest_input: 0,
                 presented: 0,
                 skipped: 0,
             };
@@ -239,7 +281,7 @@ impl Codec {
                             .as_micros() as u64,
                         self.clock.elapsed().as_micros() as u64,
                     );
-                    self.newest_input = self.newest_input.max(time);
+                    let queued = Instant::now();
                     check(AMediaCodec_queueInputBuffer(
                         self.handle,
                         index,
@@ -248,64 +290,86 @@ impl Codec {
                         time,
                         0,
                     ))?;
+                    self.timing.submitted(time, frame.received, queued);
                     self.input = None;
                     worked = true;
                 }
             }
             if self.output.is_none() {
-                let mut info = BufferInfo {
-                    offset: 0,
-                    size: 0,
-                    timestamp: 0,
-                    flags: 0,
-                };
-                let index = AMediaCodec_dequeueOutputBuffer(self.handle, &mut info, 0);
-                match index {
-                    -2 => {
-                        let handle = AMediaCodec_getOutputFormat(self.handle);
-                        if !handle.is_null() {
-                            let format = Format(handle);
-                            if !self.dimensions_from_stream {
-                                if let Some(size) = format.dimensions() {
-                                    self.dimensions = size;
-                                }
-                            }
-                        }
+                self.output = self.dequeue_picture()?;
+            }
+            let Some((mut index, mut time)) = self.output else {
+                return Ok(worked);
+            };
+            let now = self.clock.elapsed().as_micros() as u64;
+            if now < time {
+                return Ok(worked);
+            }
+            self.output = None;
+            if self.presented != 0 {
+                // Only trade a stale picture for a newer decoded picture that
+                // can be displayed now. Submitted input is not a replacement.
+                for _ in 0..3 {
+                    if now - time < super::clock::LATE_US {
+                        break;
                     }
-                    -1 | -3 => {}
-                    index if index >= 0 => {
-                        self.output = Some((index as usize, info.timestamp.max(0) as u64));
+                    let Some((next_index, next_time)) = self.dequeue_picture()? else {
+                        break;
+                    };
+                    if !super::clock::can_replace_picture(now, time, next_time) {
+                        self.output = Some((next_index, next_time));
+                        break;
                     }
-                    error => return Err(error as i32),
+                    check(AMediaCodec_releaseOutputBuffer(self.handle, index, false))?;
+                    self.skipped += 1;
+                    (index, time) = (next_index, next_time);
                 }
             }
-            if let Some((index, time)) = self.output {
-                let now = self.clock.elapsed().as_micros() as u64;
-                if now >= time {
-                    self.output = None;
-                    // Only skip presentation when there is a newer frame to catch up to.
-                    // The codec still decodes reference frames in order.
-                    let render = self.presented == 0
-                        || now - time < 100_000
-                        || self.newest_input.saturating_sub(time) < 33_000;
-                    check(AMediaCodec_releaseOutputBuffer(self.handle, index, render))?;
-                    if render {
-                        self.presented += 1;
-                        let mut streams = streams.lock().unwrap();
-                        if streams.video.mark_rendered(self.revision, self.dimensions) {
-                            log_message(&format!(
-                                "First AirPlay frame {}x{}",
-                                self.dimensions.0, self.dimensions.1
-                            ));
-                        }
-                    } else {
-                        self.skipped += 1;
-                    }
-                    worked = true;
+            check(AMediaCodec_releaseOutputBuffer(self.handle, index, true))?;
+            self.presented += 1;
+            if self.reported_dimensions != Some(self.dimensions) {
+                self.reported_dimensions = Some(self.dimensions);
+                if streams.lock().unwrap().video.mark_rendered(self.revision, self.dimensions) {
+                    log_message(&format!(
+                        "First AirPlay frame {}x{}",
+                        self.dimensions.0, self.dimensions.1
+                    ));
                 }
             }
         }
-        Ok(worked)
+        Ok(true)
+    }
+
+    fn dequeue_picture(&mut self) -> Result<Option<(usize, u64)>, i32> {
+        let mut info = BufferInfo {
+            offset: 0,
+            size: 0,
+            timestamp: 0,
+            flags: 0,
+        };
+        unsafe {
+            match AMediaCodec_dequeueOutputBuffer(self.handle, &mut info, 0) {
+                -2 => {
+                    let handle = AMediaCodec_getOutputFormat(self.handle);
+                    if !handle.is_null() {
+                        let format = Format(handle);
+                        if !self.dimensions_from_stream {
+                            if let Some(size) = format.dimensions() {
+                                self.dimensions = size;
+                            }
+                        }
+                    }
+                    Ok(None)
+                }
+                -1 | -3 => Ok(None),
+                index if index >= 0 => {
+                    let deadline = info.timestamp.max(0) as u64;
+                    self.timing.output(deadline);
+                    Ok(Some((index as usize, deadline)))
+                }
+                error => Err(error as i32),
+            }
+        }
     }
 }
 
@@ -372,7 +436,17 @@ impl VideoPlayback {
         }
         let has_surface = SURFACE.lock().unwrap().is_some();
         let active = has_surface && streams.lock().unwrap().video.can_render();
-        (active || self.codec.is_some()).then_some(Duration::from_millis(2))
+        if !active {
+            return self.codec.as_ref().map(|_| Duration::from_millis(2));
+        }
+        let delay = self.codec.as_ref().map_or(2, |codec| {
+            if codec.input.is_some() && codec.output.is_none() && codec.timing.inflight.is_empty() {
+                12
+            } else {
+                2
+            }
+        });
+        Some(Duration::from_millis(delay))
     }
 
     fn video(&mut self, streams: &Mutex<Streams>) -> bool {

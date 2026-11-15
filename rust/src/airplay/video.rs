@@ -267,6 +267,8 @@ impl VideoSession for Mirror {
                         video.lost_frames = true;
                         return;
                     };
+                    #[cfg(target_os = "android")]
+                    let was_empty = video.frames.is_empty();
                     video.queue(
                         Frame {
                             data,
@@ -276,6 +278,10 @@ impl VideoSession for Mirror {
                         },
                         keyframe,
                     );
+                    #[cfg(target_os = "android")]
+                    if was_empty && !video.frames.is_empty() {
+                        streams.wake_video();
+                    }
                 }
             }
             _ => {}

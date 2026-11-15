@@ -64,6 +64,20 @@ async fn read_with_timeout(
     }
 }
 
+async fn read_payload(
+    stream: &mut (impl tokio::io::AsyncRead + Unpin),
+    len: usize,
+) -> std::io::Result<BytesMut> {
+    let mut payload = BytesMut::with_capacity(len);
+    let mut reader = stream.take(len as u64);
+    while payload.len() < len {
+        if reader.read_buf(&mut payload).await? == 0 {
+            return Err(std::io::ErrorKind::UnexpectedEof.into());
+        }
+    }
+    Ok(payload)
+}
+
 /// Run the video stream receiver. Accepts one TCP connection and processes packets.
 pub(crate) async fn run(
     listener: TcpListener,
@@ -102,10 +116,22 @@ async fn process(stream: TcpStream, mut cipher: VideoCipher, mut session: Box<dy
             break;
         }
 
-        let mut payload = BytesMut::zeroed(metadata.payload_len);
-        if !read_with_timeout(&mut stream, &mut payload, "payload").await {
-            break;
-        }
+        let mut payload = match tokio::time::timeout(
+            READ_TIMEOUT,
+            read_payload(&mut stream, metadata.payload_len),
+        )
+        .await
+        {
+            Ok(Ok(payload)) => payload,
+            Ok(Err(error)) => {
+                info!(part = "payload", error_kind = ?error.kind(), "Video stream ended during read");
+                break;
+            }
+            Err(_) => {
+                info!(part = "payload", "Video stream read timed out");
+                break;
+            }
+        };
         let kind = classify_packet(metadata.packet_type, &payload);
         if matches!(kind, PacketKind::Payload) {
             cipher.decrypt(&mut payload);
@@ -129,6 +155,18 @@ async fn process(stream: TcpStream, mut cipher: VideoCipher, mut session: Box<dy
 #[cfg(test)]
 mod tests {
     use super::*;
+
+    #[tokio::test]
+    async fn payload_read_stops_at_packet_boundary_and_rejects_truncation() {
+        let packets = &[1, 2, 3, 4, 5][..];
+        let mut stream = BufReader::new(packets);
+        assert_eq!(&read_payload(&mut stream, 3).await.unwrap()[..], &[1, 2, 3]);
+        assert_eq!(&read_payload(&mut stream, 1).await.unwrap()[..], &[4]);
+        assert_eq!(
+            read_payload(&mut stream, 2).await.unwrap_err().kind(),
+            std::io::ErrorKind::UnexpectedEof
+        );
+    }
 
     #[test]
     fn parses_little_endian_header_fields() {
